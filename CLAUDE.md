@@ -37,6 +37,9 @@ npm run e2e            # 임시 볼트로 실제 Claude 호출 (구독 사용량
 | `src/assistant/agenda.ts` | `일정.md` 줄(`- [ ] 14:00 치과 📅 2026-11-07`), 📌 줄, 체크 맞추기, 알림 시각 (순수 함수) |
 | `src/assistant/routines.ts` | `루틴.md` 줄(`- 07:00 영어 🔁 매일`), 🔁 줄, 연속 기록·이번 주 달성 (순수 함수) |
 | `src/assistant/daily.ts` | 데일리 노트 위치 (설정 → 없으면 최근 데일리 노트 폴더) |
+| `src/assistant/calendar.ts` | 애플 캘린더 일정 → 📆 줄, 지시문용 줄, 넣을 일정 시작·끝 (순수 함수) |
+| `src/assistant/maccal.ts` | 캘린더 도우미 앱을 지원 폴더에 풀고 `open -W` 로 부름 (auth/calendars/list/add/remove), `calendar.json` 캐시 |
+| `native/calendar-helper.swift` | 캘린더 도우미 앱 (EventKit). `npm run build-helper` 가 빌드해서 `src/assistant/calhelper-bundle.ts` (자동 생성) 로 넣음 |
 | `src/assistant/inbox.ts` | 받은자료 → `자료/<분류>/` 노트. 문서 글자 뽑기는 `officetext.ts` |
 | `src/assistant/schedule.ts` | 10분마다 자동 실행 등록: 맥 launchd / 윈도우 작업 스케줄러(+wscript로 창 숨김) |
 | `src/assistant/cli.ts` | `assistant.js` 진입점 (예약 실행이 `node assistant.js tick` 으로 부름: 알림 → 맞추기 → 할 일 고르기) |
@@ -59,4 +62,6 @@ npm run e2e            # 임시 볼트로 실제 Claude 호출 (구독 사용량
 - 윈도우 npm 설치판 `claude.cmd` 는 바로 spawn 못 한다 → `claude.ts` 의 `command()` 가 node + cli.js 로 실행.
 - `--append-system-prompt` 는 대화 세션 첫 요청 때 고정된다. 지시문을 바꾸면 사이드바에서 **새 대화**를 시작해야 반영된다.
 - 비서를 실제로 돌려 볼 땐 `CLAUDE_ASSISTANT_HOME=<임시 폴더>` 를 주면 진짜 설정·상태 대신 그 폴더를 쓰고 알림 대신 기록만 남긴다 (그 폴더에 `config.json` 을 만들고 `vault` 를 볼트 복사본으로).
+- 맥은 캘린더 권한을 "앱"에 준다. 옵시디언 확장이나 예약 실행(node)은 직접 못 받으므로 도우미 앱이 대신 한다. 도우미 앱 파일이 바뀌면(다시 빌드하면) 사용자가 허용을 다시 해야 하니, Swift 코드는 꼭 필요할 때만 고칠 것. 빌드엔 Xcode 명령줄 도구가 필요하다.
+- 시각 있는 `<todo>`는 캘린더가 켜져 있으면 캘린더로, 아니면 `일정.md`로 간다 (`briefing.ts` 의 `addTodo`). 캘린더 일정 알림은 캘린더 앱이 하므로 비서는 📆 일정을 따로 알리지 않는다.
 - Tasks 플러그인은 체크할 때 줄 끝에 `✅ 날짜`를 붙인다. 📌·🔁 줄을 읽을 땐 항상 `pinText` 로 지운 뒤 비교.

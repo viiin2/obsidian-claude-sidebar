@@ -33,6 +33,8 @@ export interface TodoSeg {
   index: number;
   date: string;
   time?: string;
+  /** 끝 시각 (캘린더에 넣을 때) */
+  end?: string;
   text: string;
   complete: boolean;
 }
@@ -147,6 +149,7 @@ export function parseSegments(src: string, streaming = false): Segment[] {
         index: todoIndex++,
         date: (attrs.date ?? "").trim(),
         time: (attrs.time ?? "").trim() || undefined,
+        ...((attrs.end ?? "").trim() ? { end: attrs.end.trim() } : {}),
         text: body.replace(/\s+/g, " ").trim(),
         complete: done,
       });

@@ -11,7 +11,7 @@ import { appendFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import { IS_WIN, exec } from "../exec";
 import { dueReminders, reminderKey, shiftDate } from "./agenda";
-import { BriefResult, loadAgenda, loadRoutines, routineStatus, runRefresh, runSlot, syncAgenda } from "./briefing";
+import { BriefResult, loadAgenda, loadRoutines, refreshCalendar, routineStatus, runRefresh, runSlot, syncAgenda } from "./briefing";
 import { routinesOn } from "./routines";
 import { collect } from "./collect";
 import { AssistantConfig, CONFIG_PATH, LOG_PATH, loadConfig, loadState, patchState } from "./config";
@@ -102,6 +102,7 @@ async function tick(cfg: AssistantConfig): Promise<number> {
   if (!cfg.enabled) return 0;
   const now = new Date();
   if (cfg.remind) await remind(cfg, now).catch((e) => log(`알림 실패: ${(e as Error).message}`));
+  await refreshCalendar(cfg, now, false, log);
   try {
     syncAgenda(cfg, now);
   } catch (e) {

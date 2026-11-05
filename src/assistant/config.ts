@@ -25,6 +25,12 @@ export interface AssistantConfig {
   agendaFile: string;
   /** 루틴 노트 (볼트 기준) */
   routineFile: string;
+  /** 애플 캘린더 연동 (맥): 일정을 할 일에 붙이고, 시각이 있는 일정은 캘린더에 넣음 */
+  calendarOn: boolean;
+  /** 말한 일정을 넣을 캘린더 id (비면 기본 캘린더) */
+  calendarId: string;
+  /** 넣은 일정의 알림: 몇 분 전 */
+  calendarAlarm: number;
   /** 최근 며칠 안에 손댄 프로젝트를 챙길지 */
   days: number;
   /** git 폴더를 찾을 곳 */
@@ -63,6 +69,9 @@ export const DEFAULT_CONFIG: Omit<AssistantConfig, "vault"> = {
   remind: true,
   agendaFile: "일정.md",
   routineFile: "루틴.md",
+  calendarOn: false,
+  calendarId: "",
+  calendarAlarm: 15,
   days: 30,
   // 윈도우: 바탕화면(OneDrive로 옮겨진 경우 포함), GitHub Desktop, Visual Studio 기본 위치
   scanRoots: IS_WIN

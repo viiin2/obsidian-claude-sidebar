@@ -3,7 +3,7 @@
 //   점심 점검 (오전에 한 것 → 오후 할 일)
 //   저녁 회고 (오늘 한 것 → 내일 이어갈 것)
 //   현황 새로고침 (Claude 없이 진행도·현황표만)
-//   일정·루틴 맞추기 (일정.md ↔ 데일리 노트의 📌 줄, 루틴.md → 🔁 줄)
+//   일정·루틴·캘린더 맞추기 (일정.md ↔ 📌 줄, 루틴.md → 🔁 줄, 애플 캘린더 → 📆 줄)
 // 옵시디언 밖(예약 실행)에서도, 옵시디언 안(사이드바 버튼)에서도 같은 함수를 씁니다.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
@@ -11,7 +11,24 @@ import { dirname, join } from "path";
 import { RunHandle, runClaude } from "../claude";
 import { findBin } from "../exec";
 import { noteBlocks } from "../segments";
-import { AgendaItem, addAgenda, dropPinDuplicates, insertPinRows, keepCheckedPins, itemKey, parseAgenda, pinLine, pinsFor, removeAgenda, removePin, shiftDate, syncPins } from "./agenda";
+import {
+  AgendaItem,
+  addAgenda,
+  dropPinDuplicates,
+  insertPinRows,
+  itemKey,
+  keepCheckedPins,
+  parseAgenda,
+  pinLine,
+  pinsFor,
+  removeAgenda,
+  removePin,
+  removePinKey,
+  shiftDate,
+  syncPins,
+} from "./agenda";
+import { CalEvent, calPinRow, eventLine, eventSpan, eventsLeft, eventsOn } from "./calendar";
+import { calAdd, calList, calRemove, calendarSupported, readCalCache } from "./maccal";
 import { Project, Snapshot, collect } from "./collect";
 import { AssistantConfig, SNAPSHOT_PATH, SUPPORT_DIR, patchState } from "./config";
 import { dailyOpts, dailyRel, dailyResolver, newDailyText } from "./daily";
@@ -181,6 +198,78 @@ export function removeFromAgenda(cfg: AssistantConfig, it: AgendaItem, now = new
   }
 }
 
+// ─── 애플 캘린더 ───────────────────────────────────────────
+
+const CAL_DAYS = 14;
+const CAL_FRESH_MIN = 20;
+
+function calOn(cfg: AssistantConfig): boolean {
+  return cfg.calendarOn && calendarSupported();
+}
+
+/** 캘린더에서 오늘~2주 일정을 새로 읽어 둠 (20분 안에 읽었으면 건너뜀). 실패하면 전에 읽은 것을 씀 */
+export async function refreshCalendar(cfg: AssistantConfig, now = new Date(), force = false, log?: (m: string) => void): Promise<void> {
+  if (!calOn(cfg)) return;
+  const today = ymd(now);
+  const c = readCalCache();
+  const fresh = c && c.from <= today && (now.getTime() - Date.parse(c.at)) / 60000 < CAL_FRESH_MIN;
+  if (fresh && !force) return;
+  try {
+    await calList(today, shiftDate(today, CAL_DAYS));
+  } catch (e) {
+    log?.(`캘린더를 읽지 못했어요: ${(e as Error).message}`);
+  }
+}
+
+/** 마지막으로 읽어 둔 캘린더 일정 (연동이 꺼져 있으면 없음) */
+export function calendarEvents(cfg: AssistantConfig): CalEvent[] {
+  return calOn(cfg) ? readCalCache()?.events ?? [] : [];
+}
+
+export interface AddedTodo {
+  /** 어디에 넣었나: 애플 캘린더 / 일정 노트 */
+  where: "calendar" | "agenda";
+  /** 캘린더 일정 id (빼기용) */
+  id?: string;
+}
+
+/**
+ * 대화에서 말한 일정 넣기: 시각이 있고 캘린더가 연결돼 있으면 애플 캘린더(알림 포함), 아니면 일정 노트.
+ * 오늘 일이면 데일리 노트 오늘 할 일 칸에도 바로 붙음.
+ */
+export async function addTodo(cfg: AssistantConfig, it: AgendaItem, end?: string, now = new Date()): Promise<AddedTodo> {
+  if (calOn(cfg) && it.time) {
+    const span = eventSpan(it.date, it.time, end);
+    const id = await calAdd({ title: it.text, ...span, calendarId: cfg.calendarId, alarmMin: cfg.calendarAlarm });
+    await refreshCalendar(cfg, now, true);
+    syncAgenda(cfg, now);
+    return { where: "calendar", id };
+  }
+  addToAgenda(cfg, it, now);
+  return { where: "agenda" };
+}
+
+export async function removeTodo(cfg: AssistantConfig, it: AgendaItem, added: AddedTodo, end?: string, now = new Date()): Promise<void> {
+  if (added.where === "agenda" || !added.id) {
+    removeFromAgenda(cfg, it, now);
+    return;
+  }
+  await calRemove(added.id);
+  // 오늘 할 일 칸에 붙은 📆 줄도 (체크 안 했으면) 뺌
+  if (it.time) {
+    const span = eventSpan(it.date, it.time, end);
+    const key = calPinRow({ id: "", title: it.text, start: span.start, end: span.end, allDay: false, calendar: "" }, it.date).key;
+    const todayAbs = join(cfg.vault, dailyRel(cfg.vault, now));
+    const daily = readText(todayAbs);
+    const block = getBriefing(daily, "morning");
+    if (block !== null) {
+      const b = removePinKey(block, key);
+      if (b !== block) writeText(todayAbs, upsertBriefing(daily, b, "morning"));
+    }
+  }
+  await refreshCalendar(cfg, now, true);
+}
+
 // ─── 루틴 ──────────────────────────────────────────────────
 
 function routineAbs(cfg: AssistantConfig): string {
@@ -229,10 +318,11 @@ export function routineStatus(cfg: AssistantConfig, now = new Date(), routines =
   return routineStats(routines, ymd(now), checks);
 }
 
-/** 오늘 할 일 칸 맨 위에 넣을 줄: 🔁 루틴 → 📌 일정 */
-function pinRows(routines: RoutineStat[], pins: AgendaItem[], today: string): { key: string; line: string }[] {
+/** 오늘 할 일 칸 맨 위에 넣을 줄: 🔁 루틴 → 📆 캘린더 → 📌 일정 */
+function pinRows(routines: RoutineStat[], events: CalEvent[], pins: AgendaItem[], today: string): { key: string; line: string }[] {
   return [
     ...routines.filter((s) => s.today !== null).map((s) => ({ key: `🔁 ${itemKey(s.r)}`, line: routinePinLine(s.r, s.before) })),
+    ...eventsOn(events, today).map((e) => calPinRow(e, today)),
     ...pins.map((p) => ({ key: `📌 ${itemKey(p)}`, line: pinLine(p, today) })),
   ];
 }
@@ -245,7 +335,8 @@ export function syncAgenda(cfg: AssistantConfig, now = new Date()): boolean {
   const abs = agendaAbs(cfg);
   const agenda = readText(abs);
   const routines = loadRoutines(cfg);
-  if (!agenda.trim() && !routines.length) return false;
+  const events = calendarEvents(cfg);
+  if (!agenda.trim() && !routines.length && !events.length) return false;
   const today = ymd(now);
   const todayAbs = join(cfg.vault, dailyRel(cfg.vault, now));
   const daily = readText(todayAbs);
@@ -253,7 +344,7 @@ export function syncAgenda(cfg: AssistantConfig, now = new Date()): boolean {
   if (block === null) return false;
   const synced = syncPins(block, agenda, today);
   const stats = routines.length ? routineStatus(cfg, now, routinesOn(routines, today)) : [];
-  const nextBlock = insertPinRows(synced.block, pinRows(stats, pinsFor(parseAgenda(synced.agenda), today), today));
+  const nextBlock = insertPinRows(synced.block, pinRows(stats, events, pinsFor(parseAgenda(synced.agenda), today), today));
   let changed = false;
   if (synced.agenda !== agenda) {
     writeText(abs, synced.agenda);
@@ -442,6 +533,9 @@ export async function runMorning(cfg: AssistantConfig, hooks: BriefHooks = {}, n
   const in2w = shiftDate(today, 14);
   const upcoming = agenda.filter((x) => !x.done && x.date > today && x.date <= in2w);
   const routines = routineStatus(cfg, now, routinesOn(loadRoutines(cfg), today));
+  await refreshCalendar(cfg, now, true, log);
+  const events = calendarEvents(cfg);
+  const todayEvents = eventsOn(events, today);
   const out = await askClaude(
     cfg,
     briefingPrompt({
@@ -453,6 +547,8 @@ export async function runMorning(cfg: AssistantConfig, hooks: BriefHooks = {}, n
       pinned,
       upcoming,
       routines: routines.map((x) => x.r),
+      todayEvents: todayEvents.map((e) => eventLine(e, false)),
+      upcomingEvents: events.filter((e) => e.start.slice(0, 10) > today).map((e) => eventLine(e, true)),
     }),
     hooks,
   );
@@ -468,8 +564,8 @@ export async function runMorning(cfg: AssistantConfig, hooks: BriefHooks = {}, n
   const filedLine = ok.length
     ? `\n\n> [!example]- 받은자료 ${ok.length}개 정리함\n${ok.map((f) => `> - ${f.category} · [[${f.note!.replace(/\.md$/, "")}|${f.note!.split("/").pop()!.replace(/\.md$/, "")}]]`).join("\n")}`
     : "";
-  const deduped = dropPinDuplicates(main, [...pinned, ...routines.map((x) => x.r)]);
-  let block = `${insertPinRows(deduped, pinRows(routines, pinned, today))}\n\n${summary}${filedLine}`;
+  const deduped = dropPinDuplicates(main, [...pinned, ...routines.map((x) => x.r), ...todayEvents.map((e) => ({ text: e.title }))]);
+  let block = `${insertPinRows(deduped, pinRows(routines, events, pinned, today))}\n\n${summary}${filedLine}`;
   // 다시 만들 때는 전에 체크해 둔 항목을 그대로 둠
   const old = getBriefing(day.md, "morning");
   if (old) block = carryChecks(old, keepCheckedPins(old, block));
@@ -493,11 +589,15 @@ export async function runMidday(cfg: AssistantConfig, hooks: BriefHooks = {}, no
   const { snap, created } = await refreshProjects(cfg, hooks, now, false);
   checkAbort(hooks);
   hooks.step?.("sun", "오후 할 일");
+  await refreshCalendar(cfg, now, true, hooks.log);
   syncAgenda(cfg, now);
   const day = openToday(cfg, now);
   const left = loadAgenda(cfg).filter((x) => x.date === today && !x.done && (!x.time || x.time >= hhmm(now)));
   for (const r of routineStatus(cfg, now, routinesOn(loadRoutines(cfg), today))) {
     if (r.today === false) left.push({ date: today, time: r.r.time, text: `🔁 ${r.r.text} (루틴)`, done: false });
+  }
+  for (const e of eventsLeft(calendarEvents(cfg), today, hhmm(now))) {
+    left.push({ date: today, time: e.allDay ? undefined : e.start.slice(11, 16), text: `📆 ${e.title} (캘린더)`, done: false });
   }
   const out = await askClaude(
     cfg,
@@ -520,9 +620,14 @@ export async function runEvening(cfg: AssistantConfig, hooks: BriefHooks = {}, n
   const { snap, created } = await refreshProjects(cfg, hooks, now, false);
   checkAbort(hooks);
   hooks.step?.("moon", "오늘 회고");
+  await refreshCalendar(cfg, now, true, hooks.log);
   syncAgenda(cfg, now);
   const day = openToday(cfg, now);
-  const tomorrow = loadAgenda(cfg).filter((x) => x.date === shiftDate(today, 1) && !x.done);
+  const tmr = shiftDate(today, 1);
+  const tomorrow = loadAgenda(cfg).filter((x) => x.date === tmr && !x.done);
+  for (const e of eventsOn(calendarEvents(cfg), tmr)) {
+    tomorrow.push({ date: tmr, time: e.allDay || e.start.slice(0, 10) !== tmr ? undefined : e.start.slice(11, 16), text: `📆 ${e.title}`, done: false });
+  }
   const out = await askClaude(
     cfg,
     eveningPrompt({ today: formatDate(now, "YYYY-MM-DD (ddd)"), todayPath: day.rel, daily: day.md.slice(0, 8000), commits: todayCommits(snap, today), tomorrow }),
@@ -555,6 +660,7 @@ export function runSlot(cfg: AssistantConfig, slot: BriefSlot, hooks: BriefHooks
 /** Claude 없이: 진행도·현황표 새로고침 + 일정 맞추기 */
 export async function runRefresh(cfg: AssistantConfig, hooks: BriefHooks = {}, now = new Date()): Promise<void> {
   checkVault(cfg);
+  await refreshCalendar(cfg, now, false, hooks.log);
   await refreshProjects(cfg, hooks, now, false);
   syncAgenda(cfg, now);
 }

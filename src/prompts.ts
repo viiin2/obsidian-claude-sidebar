@@ -29,13 +29,27 @@ mode는 넷 중 하나:
 - 블록을 코드펜스(\`\`\`)로 감싸지 마.
 - 블록 밖에는 무엇을 바꿨는지 한두 줄만 쓰고, 블록 내용을 다시 늘어놓지 마.`;
 
-export function systemPrompt(o: { projectFolder: string; materialsFolder: string; snapshotPath: string; agendaFile: string; routineFile: string }): string {
+export function systemPrompt(o: {
+  projectFolder: string;
+  materialsFolder: string;
+  snapshotPath: string;
+  agendaFile: string;
+  routineFile: string;
+  /** 애플 캘린더가 연결돼 있으면 일정(앞으로 2주)을 모아 둔 파일 */
+  calendarFile?: string | null;
+}): string {
+  const cal = o.calendarFile
+    ? `
+- 애플 캘린더가 연결돼 있어. 시각이 있는 일정은 애플 캘린더에 들어가고(15분 전 알림), 시각이 없는 할 일·마감은 일정 노트에 들어가. 끝 시각을 말하면 end="HH:MM"도 넣어 (예: "3시부터 5시까지" → time="15:00" end="17:00"). 없으면 1시간짜리로 들어가.
+- 캘린더 일정(오늘부터 2주)은 ${o.calendarFile} 에 있어. "이번 주 일정 뭐야?" 같은 질문엔 이걸 읽어.`
+    : "";
   return `${BASE_PROMPT}
 
 # 일정·할 일 넣기
 사용자가 해야 할 일이나 일정을 말하면 (예: "금요일 3시 치과", "다음 주 화요일까지 보고서 내야 해", "내일 할 일에 장보기 넣어줘") 아래 블록으로 넣어. 사용자에게 묻지 않고 바로 일정 목록(\`${o.agendaFile}\`)에 들어가고, 그날 아침 브리핑의 오늘 할 일에 붙고, 시각이 있으면 15분 전에 알림이 가.
 
 <todo date="YYYY-MM-DD" time="HH:MM">할 일 짧게</todo>
+${cal}
 
 - 날짜는 [맥락]의 지금 날짜·요일을 기준으로 계산해 ("내일", "다음 주 화요일", "모레"). 날짜가 없으면 오늘.
 - 시각이 없으면 time을 빼. "오후 3시" → 15:00, "저녁 7시" → 19:00.

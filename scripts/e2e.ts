@@ -15,13 +15,13 @@ writeFileSync(join(vault, "메모.md"), "오늘 회의 했음 결론은 출시�
 const claude = findClaude();
 if (!claude) throw new Error("claude 없음");
 
-async function ask(prompt: string): Promise<{ text: string; tools: string[]; ok: boolean; ms: number }> {
+async function ask(prompt: string, calendarFile: string | null = null): Promise<{ text: string; tools: string[]; ok: boolean; ms: number }> {
   let text = "";
   const tools: string[] = [];
   let ok = false;
   const t0 = Date.now();
   const h = runClaude({
-    claudePath: claude!, cwd: vault, prompt, systemPrompt: systemPrompt({ projectFolder: "프로젝트", materialsFolder: "자료", snapshotPath: "/없음.json", agendaFile: "일정.md", routineFile: "루틴.md" }), model: "sonnet", effort: "low",
+    claudePath: claude!, cwd: vault, prompt, systemPrompt: systemPrompt({ projectFolder: "프로젝트", materialsFolder: "자료", snapshotPath: "/없음.json", agendaFile: "일정.md", routineFile: "루틴.md", calendarFile }), model: "sonnet", effort: "low",
     onEvent: (e) => {
       if (e.type === "text") text += e.delta;
       if (e.type === "tool") tools.push(`${e.name}(${JSON.stringify(e.input).slice(0, 60)})`);
@@ -61,6 +61,11 @@ async function ask(prompt: string): Promise<{ text: string; tools: string[]; ok:
     rs.some((x) => x.days === "매일" && x.time === "07:00" && x.text.includes("영어")) &&
     rs.some((x) => x.days.replace(/\s/g, "") === "월수금" && x.text.includes("헬스"));
 
-  console.log(`\n결과: 질문 ${qPass ? "통과" : "실패"} · 다듬기 ${pPass ? "통과" : "실패"} · 일정 ${tPass ? "통과" : "실패"} · 루틴 ${rPass ? "통과" : "실패"}`);
-  process.exit(qPass && pPass && tPass && rPass ? 0 : 1);
+  const c = await ask(`${contextHeader({ today: "2026-11-05 (목) 15:20" })}\n\n토요일 오후 3시부터 5시까지 친구 결혼식`, "/없음/calendar.json");
+  const cs = todoBlocks(c.text);
+  console.log(`\n⑤ 캘린더 일정 (${c.ms}ms, ok=${c.ok})\n${c.text}`);
+  const cPass = c.ok && cs.some((x) => x.date === "2026-11-07" && x.time === "15:00" && x.end === "17:00");
+
+  console.log(`\n결과: 질문 ${qPass ? "통과" : "실패"} · 다듬기 ${pPass ? "통과" : "실패"} · 일정 ${tPass ? "통과" : "실패"} · 루틴 ${rPass ? "통과" : "실패"} · 캘린더 ${cPass ? "통과" : "실패"}`);
+  process.exit(qPass && pPass && tPass && rPass && cPass ? 0 : 1);
 })();

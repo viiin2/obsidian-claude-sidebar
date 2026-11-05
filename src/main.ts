@@ -7,7 +7,8 @@ import { AssistantConfig, DEFAULT_CONFIG, LOG_PATH, SNAPSHOT_PATH, SUPPORT_DIR, 
 import type { Snapshot } from "./assistant/collect";
 import type { AgendaItem } from "./assistant/agenda";
 import type { Routine } from "./assistant/routines";
-import { addToAgenda, addToRoutines, removeFromAgenda, removeFromRoutines } from "./assistant/briefing";
+import { AddedTodo, addToRoutines, addTodo, refreshCalendar, removeFromRoutines, removeTodo } from "./assistant/briefing";
+import { CAL_CACHE, CalInfo, calAuth, calCalendars, calendarSupported } from "./assistant/maccal";
 import { listInbox, processInbox } from "./assistant/inbox";
 import { copyScript, installSchedule, normalizeTime, scheduleInstalled, scheduleSupported, uninstallSchedule } from "./assistant/schedule";
 
@@ -27,6 +28,8 @@ interface Settings {
   remind: boolean;
   agendaFile: string;
   routineFile: string;
+  calendarOn: boolean;
+  calendarId: string;
   scanRoots: string;
   projectFolder: string;
   autoInbox: boolean;
@@ -49,6 +52,8 @@ const DEFAULTS: Settings = {
   remind: DEFAULT_CONFIG.remind,
   agendaFile: DEFAULT_CONFIG.agendaFile,
   routineFile: DEFAULT_CONFIG.routineFile,
+  calendarOn: DEFAULT_CONFIG.calendarOn,
+  calendarId: DEFAULT_CONFIG.calendarId,
   scanRoots: DEFAULT_CONFIG.scanRoots.join(", "),
   projectFolder: DEFAULT_CONFIG.projectFolder,
   autoInbox: true,
@@ -127,6 +132,7 @@ export default class ClaudeSidebarPlugin extends Plugin {
       refresh();
       this.ensureRgignore();
       this.syncAssistant();
+      if (this.settings.calendarOn) void refreshCalendar(this.assistantConfig(), new Date(), true).catch(() => undefined);
       if (this.settings.autoInbox) {
         await this.ensureFolder(this.settings.inboxFolder);
         this.queueInbox();
@@ -212,6 +218,8 @@ export default class ClaudeSidebarPlugin extends Plugin {
       remind: s.remind,
       agendaFile: s.agendaFile,
       routineFile: s.routineFile,
+      calendarOn: s.calendarOn,
+      calendarId: s.calendarId,
       scanRoots: s.scanRoots.split(",").map((x) => x.trim()).filter(Boolean),
       projectFolder: s.projectFolder,
       inboxFolder: s.inboxFolder,
@@ -244,13 +252,32 @@ export default class ClaudeSidebarPlugin extends Plugin {
     else await uninstallSchedule();
   }
 
-  /** 대화에서 말한 일정을 일정 목록(과 오늘이면 데일리 노트)에 넣음. 이미 있으면 false */
-  addAgenda(it: AgendaItem): boolean {
-    return addToAgenda(this.assistantConfig(), it);
+  /** 대화에서 말한 일정 넣기: 시각이 있고 캘린더가 연결돼 있으면 애플 캘린더, 아니면 일정 노트 */
+  addAgenda(it: AgendaItem, end?: string): Promise<AddedTodo> {
+    return addTodo(this.assistantConfig(), it, end);
   }
 
-  removeAgenda(it: AgendaItem): void {
-    removeFromAgenda(this.assistantConfig(), it);
+  removeAgenda(it: AgendaItem, added: AddedTodo, end?: string): Promise<void> {
+    return removeTodo(this.assistantConfig(), it, added, end);
+  }
+
+  /** 애플 캘린더 연결: 허용을 묻고(처음 한 번), 캘린더 목록을 가져옴 */
+  calendars: CalInfo[] = [];
+  async connectCalendar(on: boolean): Promise<void> {
+    if (on) {
+      if (!calendarSupported()) throw new Error("애플 캘린더는 맥에서만 돼요");
+      const st = await calAuth();
+      if (st !== "full") throw new Error("캘린더 접근을 허용하지 않았어요");
+      this.calendars = await calCalendars();
+    }
+    this.settings.calendarOn = on;
+    await this.saveChat();
+    this.syncAssistant();
+    if (on) await refreshCalendar(this.assistantConfig(), new Date(), true);
+  }
+
+  calendarCache(): string {
+    return CAL_CACHE;
   }
 
   /** 대화에서 말한 루틴을 루틴 노트(와 오늘 할 날이면 데일리 노트)에 넣음 */
@@ -492,6 +519,39 @@ class SettingsTab extends PluginSettingTab {
           await save();
         }),
       );
+
+    if (calendarSupported()) {
+      const calRow = new Setting(containerEl)
+        .setName("애플 캘린더")
+        .setDesc(
+          s.calendarOn
+            ? "연결됨 · 오늘 일정이 할 일에 📆로 붙고, 시각을 말한 일정은 아래 캘린더에 들어가요 (15분 전 알림)"
+            : "켜면 캘린더 일정을 브리핑에 쓰고, \"금요일 3시 치과\"처럼 말한 일정을 캘린더에 넣어요. 처음에 맥이 접근 허용을 물어요",
+        )
+        .addToggle((t) =>
+          t.setValue(s.calendarOn).onChange(async (v) => {
+            try {
+              await this.plugin.connectCalendar(v);
+              new Notice(v ? "애플 캘린더를 연결했어요" : "애플 캘린더 연결을 껐어요");
+            } catch (e) {
+              new Notice(`실패: ${(e as Error).message}`);
+            }
+            this.display();
+          }),
+        );
+      if (s.calendarOn) {
+        const writable = this.plugin.calendars.filter((c) => c.writable);
+        if (!writable.length) void calCalendars().then((c) => ((this.plugin.calendars = c), c.length && this.display())).catch(() => undefined);
+        calRow.addDropdown((d) => {
+          d.addOption("", "기본 캘린더");
+          for (const c of writable) d.addOption(c.id, `${c.title} · ${c.source}`);
+          d.setValue(s.calendarId).onChange(async (v) => {
+            s.calendarId = v;
+            await save();
+          });
+        });
+      }
+    }
 
     new Setting(containerEl)
       .setName("루틴 노트")

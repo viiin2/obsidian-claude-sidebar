@@ -133,8 +133,8 @@ export function insertPins(block: string, pins: AgendaItem[], today: string): st
   return insertPinRows(block, pins.map((p) => ({ key: `📌 ${itemKey(p)}`, line: pinLine(p, today) })));
 }
 
-/** 📌·🔁 줄 공통: "📌 14:00 치과" / "🔁 07:00 영어 단어" (뒤에 붙는 (11/3부터), · 🔥4 는 뺌) */
-const ANY_PIN = /^>\s*[-*+]\s+\[[ xX]\]\s+(📌|🔁)\s+(.*)$/;
+/** 📌·🔁·📆 줄 공통: "📌 14:00 치과" / "🔁 07:00 영어 단어" / "📆 10:00–11:00 회의" (뒤에 붙는 (11/3부터), · 🔥4 는 뺌) */
+const ANY_PIN = /^>\s*[-*+]\s+\[[ xX]\]\s+(📌|🔁|📆)\s+(.*)$/;
 function pinKey(line: string): string | null {
   const m = line.match(ANY_PIN);
   return m ? `${m[1]} ${pinText(m[2])}` : null;
@@ -171,7 +171,7 @@ export function dropPinDuplicates(block: string, pins: { text: string }[]): stri
   return block
     .split("\n")
     .filter((l) => {
-      const m = l.match(/^>\s*[-*+]\s+\[[ xX]\]\s+(?!📌|🔁)(.*)$/);
+      const m = l.match(/^>\s*[-*+]\s+\[[ xX]\]\s+(?!📌|🔁|📆)(.*)$/);
       if (!m) return true;
       const head = squash(
         m[1]
@@ -181,6 +181,14 @@ export function dropPinDuplicates(block: string, pins: { text: string }[]): stri
       );
       return !names.some((n) => head === n || (n.length >= 4 && head.startsWith(n)));
     })
+    .join("\n");
+}
+
+/** 아직 체크 안 한 📌·🔁·📆 줄 하나를 열쇠("📆 15:00–16:00 치과")로 뺍니다. */
+export function removePinKey(block: string, key: string): string {
+  return block
+    .split("\n")
+    .filter((l) => !(pinKey(l) === key && /^>\s*[-*+]\s+\[ \]/.test(l)))
     .join("\n");
 }
 

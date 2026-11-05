@@ -52,6 +52,8 @@ export interface ChatMsg {
   applied?: number[];
   /** assistant: 일정 목록에 넣은 일정 블록 번호 */
   added?: number[];
+  /** assistant: 일정 블록 번호 → 어디에 넣었는지 (애플 캘린더면 일정 id) */
+  addedWhere?: Record<number, { where: "calendar" | "agenda"; id?: string }>;
   /** assistant: 루틴 노트에 넣은 루틴 블록 번호 */
   addedRoutines?: number[];
   ms?: number;
@@ -528,21 +530,26 @@ export class ClaudeView extends ItemView {
 
   private drawTodo(parent: HTMLElement, i: number, m: ChatMsg, s: TodoSeg): void {
     const added = m.added?.includes(s.index) ?? false;
+    const inCal = m.addedWhere?.[s.index]?.where === "calendar";
     const it = s.complete ? this.todoItem(s) : null;
     const row = parent.createDiv("cs-todo");
     row.toggleClass("is-writing", !s.complete);
     row.toggleClass("is-added", added);
-    setIcon(row.createSpan("cs-todo-icon"), added ? "calendar-check-2" : "calendar-plus");
+    setIcon(row.createSpan("cs-todo-icon"), inCal ? "calendar-clock" : added ? "calendar-check-2" : "calendar-plus");
     const when = /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? shortDate(s.date) : s.date;
-    row.createSpan({ cls: "cs-todo-when", text: `${when}${s.time ? ` ${s.time}` : ""}` });
+    row.createSpan({ cls: "cs-todo-when", text: `${when}${s.time ? ` ${s.time}${s.end ? `–${s.end}` : ""}` : ""}` });
     const text = row.createSpan({ cls: "cs-todo-text", text: s.text });
     if (!it) {
       if (s.complete) row.addClass("is-bad");
       return;
     }
-    const file = this.plugin.settings.agendaFile;
-    text.setAttr("aria-label", file);
-    text.addEventListener("click", () => void this.app.workspace.openLinkText(file, "", false));
+    if (inCal) {
+      text.setAttr("aria-label", "애플 캘린더");
+    } else {
+      const file = this.plugin.settings.agendaFile;
+      text.setAttr("aria-label", file);
+      text.addEventListener("click", () => void this.app.workspace.openLinkText(file, "", false));
+    }
     const btn = row.createEl("button", { cls: "cs-icon-btn clickable-icon", attr: { "aria-label": added ? "일정에서 빼기" : "일정에 넣기" } });
     setIcon(btn, added ? "undo-2" : "plus");
     btn.addEventListener("click", () => void this.toggleTodo(i, s, !added));
@@ -554,11 +561,13 @@ export class ClaudeView extends ItemView {
     if (!m || !it) return;
     try {
       if (add) {
-        this.plugin.addAgenda(it);
+        const where = await this.plugin.addAgenda(it, normTime(s.end));
+        m.addedWhere = { ...(m.addedWhere ?? {}), [s.index]: where };
         if (!m.added?.includes(s.index)) m.added = [...(m.added ?? []), s.index];
       } else {
-        this.plugin.removeAgenda(it);
+        await this.plugin.removeAgenda(it, m.addedWhere?.[s.index] ?? { where: "agenda" }, normTime(s.end));
         m.added = (m.added ?? []).filter((x) => x !== s.index);
+        if (m.addedWhere) delete m.addedWhere[s.index];
       }
       void this.plugin.saveChat();
       await this.renderMsg(i);
@@ -758,6 +767,7 @@ export class ClaudeView extends ItemView {
         snapshotPath: SNAPSHOT_PATH,
         agendaFile: this.plugin.settings.agendaFile,
         routineFile: this.plugin.settings.routineFile,
+        calendarFile: this.plugin.settings.calendarOn ? this.plugin.calendarCache() : null,
       }),
       model: this.plugin.settings.model || undefined,
       effort: this.plugin.settings.effort || undefined,
