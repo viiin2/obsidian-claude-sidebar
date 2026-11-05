@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { checklistProgress, readFm, setFm, upsertBriefing, getBriefing, carryChecks, BRIEF_START, BRIEF_END, renderDashboard, progressBar } from "./projects";
+import { checklistProgress, readFm, setFm, upsertBriefing, getBriefing, carryChecks, escapeNumberTags, BRIEF_START, BRIEF_END, renderDashboard, progressBar } from "./projects";
 import { formatDate, relDay } from "./datefmt";
 
 const NOTE = `---
@@ -83,4 +83,10 @@ test("다시 만든 브리핑에 체크 이어 붙이기", () => {
   const old = "> [!todo] 오늘 할 일\n> - [x] [[a]] 로비 만들기 — 이유 ✅ 2026-11-05\n> - [ ] 📌 14:00 치과";
   const fresh = "> [!todo] 오늘 할 일\n> - [ ] [[a]] 로비 만들기 — 이유\n> - [ ] [[b]] 새 일";
   assert.equal(carryChecks(old, fresh), "> [!todo] 오늘 할 일\n> - [x] [[a]] 로비 만들기 — 이유\n> - [ ] [[b]] 새 일");
+});
+
+test("숫자 태그 막기: PR #2와 → \\#2와 (코드 안, 숫자만, 이미 막은 것은 그대로)", () => {
+  assert.equal(escapeNumberTags("> - PR #2와 함께, 이슈 #15 (#3번)"), "> - PR \\#2와 함께, 이슈 #15 (\\#3번)");
+  assert.equal(escapeNumberTags("#태그 그대로, \\#2와 그대로"), "#태그 그대로, \\#2와 그대로");
+  assert.equal(escapeNumberTags("색은 `#1e1e1e` 와\n```\n#2와\n```\n#2와"), "색은 `#1e1e1e` 와\n```\n#2와\n```\n\\#2와");
 });

@@ -188,3 +188,25 @@ export function carryChecks(oldBlock: string, newBlock: string): string {
     })
     .join("\n");
 }
+
+/**
+ * "PR #2와", "#15번" 처럼 # 뒤 숫자에 글자가 붙으면 옵시디언이 태그로 잡음 → "\#2와" 로 막음.
+ * 코드 블록과 `인라인 코드` 안은 그대로 둠.
+ */
+export function escapeNumberTags(md: string): string {
+  let fence = false;
+  return md
+    .split("\n")
+    .map((line) => {
+      if (/^\s*(?:>\s*)*(```|~~~)/.test(line)) {
+        fence = !fence;
+        return line;
+      }
+      if (fence) return line;
+      return line
+        .split("`")
+        .map((part, i) => (i % 2 ? part : part.replace(/(^|[\s(])#(\d+)(?=[A-Za-z가-힣_\-/])/g, "$1\\#$2")))
+        .join("`");
+    })
+    .join("\n");
+}

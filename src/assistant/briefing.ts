@@ -24,6 +24,7 @@ import {
   Progress,
   carryChecks,
   checklistProgress,
+  escapeNumberTags,
   getBriefing,
   progressBar,
   readFm,
@@ -130,7 +131,7 @@ function readAnswer(out: string): { notify: string; main: string } {
   const notify = (out.match(/<notify>([\s\S]*?)<\/notify>/)?.[1] ?? "").trim().split("\n")[0];
   const main = noteBlocks(out).find((b) => b.complete)?.content.trim();
   if (!main) throw new Error(`브리핑 형식이 이상해요: ${out.slice(0, 200)}`);
-  return { notify, main };
+  return { notify, main: escapeNumberTags(main) };
 }
 
 async function pool<T>(items: T[], size: number, fn: (x: T) => Promise<void>): Promise<void> {
@@ -336,7 +337,7 @@ async function refreshProjects(cfg: AssistantConfig, hooks: BriefHooks, now: Dat
       try {
         const out = await askClaude(cfg, draftPrompt(p, rel), hooks, { addDirs: p.localPath ? [p.localPath] : [] });
         const block = noteBlocks(out).find((b) => b.complete);
-        writeText(join(vault, rel), (block?.content ?? fallback(p)).trimEnd() + "\n");
+        writeText(join(vault, rel), escapeNumberTags(block?.content ?? fallback(p)).trimEnd() + "\n");
       } catch (e) {
         if (hooks.isAborted?.()) return;
         log(`체크리스트 초안 실패 (${p.id}): ${(e as Error).message}`);
