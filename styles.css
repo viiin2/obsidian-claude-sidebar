@@ -1,0 +1,566 @@
+/* Claude Sidebar — 옵시디언 테마 색을 그대로 따라갑니다 */
+
+.cs-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0 !important;
+  overflow: hidden;
+  --cs-radius: 14px;
+  --cs-gap: 10px;
+}
+
+/* ── 위쪽 막대 ── */
+.cs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: none;
+}
+.cs-logo {
+  display: flex;
+  color: var(--interactive-accent);
+}
+.cs-root.is-running .cs-logo {
+  animation: cs-bob 1s ease-in-out infinite;
+}
+.cs-actions {
+  display: flex;
+  gap: 2px;
+}
+.cs-icon-btn {
+  padding: 4px 6px;
+  border-radius: 8px;
+  transition: transform 0.12s ease;
+}
+.cs-icon-btn:active {
+  transform: scale(0.88);
+}
+.cs-root.is-running .cs-actions .cs-icon-btn:not(:last-child) {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ── 메시지 영역 ── */
+.cs-msgs {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cs-gap);
+  user-select: text;
+}
+.cs-msg.is-new {
+  animation: cs-in 0.22s ease-out;
+}
+.cs-user {
+  align-self: flex-end;
+  max-width: 88%;
+}
+.cs-bubble {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  padding: 7px 12px;
+  border-radius: var(--cs-radius) var(--cs-radius) 4px var(--cs-radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.cs-bubble-icon {
+  display: flex;
+}
+.cs-bubble-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.cs-bot {
+  align-self: stretch;
+}
+.cs-md {
+  font-size: var(--font-ui-medium);
+  line-height: 1.6;
+  word-break: break-word;
+}
+.cs-md > :first-child {
+  margin-top: 0;
+}
+.cs-md > :last-child {
+  margin-bottom: 0;
+}
+.cs-md p {
+  margin: 0.4em 0;
+}
+
+/* 검색·읽기 기록 */
+.cs-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.cs-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  animation: cs-in 0.2s ease-out;
+}
+.cs-tool.is-link {
+  cursor: pointer;
+}
+.cs-tool.is-link:hover {
+  color: var(--text-normal);
+}
+.cs-tool-icon {
+  display: flex;
+}
+.cs-tool-icon svg {
+  width: 12px;
+  height: 12px;
+}
+.cs-tool-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* 답하는 중 */
+.cs-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+.cs-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  animation: cs-hop 1s infinite ease-in-out;
+}
+.cs-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.cs-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.cs-secs {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.cs-bot:hover .cs-meta {
+  opacity: 1;
+}
+.cs-meta-btn {
+  padding: 2px;
+}
+.cs-meta-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.cs-err {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(var(--color-red-rgb), 0.1);
+  color: var(--text-error);
+  font-size: var(--font-ui-small);
+}
+.cs-err-icon {
+  display: flex;
+  flex: none;
+  padding-top: 2px;
+}
+.cs-err-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── 노트 제안 카드 ── */
+.cs-card {
+  margin: 8px 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--cs-radius);
+  background: var(--background-primary-alt);
+  overflow: hidden;
+  animation: cs-in 0.22s ease-out;
+}
+.cs-card.is-writing {
+  border-style: dashed;
+}
+.cs-card.is-applied {
+  border-color: rgba(var(--color-green-rgb), 0.5);
+}
+.cs-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cs-card.is-applied .cs-card-head {
+  border-bottom: none;
+}
+.cs-card-icon {
+  display: flex;
+  color: var(--interactive-accent);
+}
+.cs-card-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.cs-card-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cs-card-name:hover {
+  text-decoration: underline;
+}
+.cs-card-mode {
+  flex: none;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.cs-card-stats {
+  flex: none;
+  display: flex;
+  gap: 5px;
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+.cs-add {
+  color: var(--color-green);
+}
+.cs-del {
+  color: var(--color-red);
+}
+.cs-card-writing {
+  padding: 14px 12px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--background-modifier-hover) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: cs-shimmer 1.4s linear infinite;
+}
+.cs-card-preview {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px 12px;
+  font-size: var(--font-ui-small);
+}
+.cs-diff {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px 0;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.5;
+}
+.cs-diff-line {
+  padding: 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+}
+.cs-diff-line.is-add {
+  background: rgba(var(--color-green-rgb), 0.14);
+  color: var(--text-normal);
+}
+.cs-diff-line.is-add::before {
+  content: "+ ";
+  color: var(--color-green);
+}
+.cs-diff-line.is-del {
+  background: rgba(var(--color-red-rgb), 0.12);
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(var(--color-red-rgb), 0.5);
+}
+.cs-diff-line.is-del::before {
+  content: "− ";
+  color: var(--color-red);
+}
+.cs-diff-skip {
+  padding: 0 10px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.cs-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.cs-card.is-applied .cs-card-actions {
+  border-top: none;
+  padding-top: 0;
+}
+.cs-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px !important;
+  padding: 4px 14px !important;
+  transition: transform 0.12s ease;
+}
+.cs-apply:active {
+  transform: scale(0.92);
+}
+.cs-apply svg {
+  width: 14px;
+  height: 14px;
+}
+.cs-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-green);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  animation: cs-pop 0.3s ease-out;
+}
+.cs-done svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── 빈 화면 ── */
+.cs-empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  color: var(--text-faint);
+}
+.cs-empty-bot {
+  display: flex;
+  color: var(--interactive-accent);
+  animation: cs-bob 2.4s ease-in-out infinite;
+}
+.cs-empty-bot svg {
+  width: 44px;
+  height: 44px;
+  stroke-width: 1.6;
+}
+.cs-empty-row {
+  display: flex;
+  gap: 8px;
+}
+.cs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px !important;
+  padding: 6px 14px !important;
+  transition: transform 0.12s ease;
+}
+.cs-pill:hover {
+  transform: translateY(-1px);
+}
+.cs-pill svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ── 입력창 ── */
+.cs-foot {
+  flex: none;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.cs-ctx:empty {
+  display: none;
+}
+.cs-ctx {
+  margin-bottom: 6px;
+}
+.cs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.cs-chip.is-off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+.cs-chip-icon {
+  display: flex;
+}
+.cs-chip-icon svg {
+  width: 12px;
+  height: 12px;
+}
+.cs-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-chip-sel {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--background-modifier-border);
+  color: var(--interactive-accent);
+}
+.cs-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 18px;
+  background: var(--background-primary);
+  transition: border-color 0.15s;
+}
+.cs-box:focus-within {
+  border-color: var(--interactive-accent);
+}
+.cs-input {
+  flex: 1;
+  resize: none;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  padding: 4px 0 !important;
+  min-height: 24px;
+  max-height: 200px;
+  font-size: var(--font-ui-medium);
+  line-height: 1.5;
+}
+.cs-send {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s ease;
+}
+.cs-send:active {
+  transform: scale(0.88);
+}
+.cs-send svg {
+  width: 16px;
+  height: 16px;
+}
+.cs-root.is-running .cs-send {
+  background: var(--background-modifier-error) !important;
+}
+
+/* ── 움직임 ── */
+@keyframes cs-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cs-hop {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+@keyframes cs-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  50% {
+    transform: translateY(-3px) rotate(-4deg);
+  }
+}
+@keyframes cs-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes cs-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cs-root *,
+  .cs-root *::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}
