@@ -564,3 +564,24 @@
     transition: none !important;
   }
 }
+
+/* ── 파일 끌어다 놓기 ── */
+.cs-root.is-drop .cs-msgs {
+  outline: 2px dashed var(--interactive-accent);
+  outline-offset: -8px;
+  border-radius: var(--cs-radius);
+  background: rgba(var(--interactive-accent-rgb), 0.06);
+}
+.cs-root.is-drop .cs-msgs::after {
+  content: "📥";
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  transform: translate(-50%, -50%);
+  font-size: 40px;
+  animation: cs-bob 1s ease-in-out infinite;
+  pointer-events: none;
+}
+.cs-msgs {
+  position: relative;
+}

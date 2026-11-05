@@ -17,8 +17,10 @@ import { RunHandle, runClaude } from "./claude";
 import { NoteMode, NoteSeg, noteBlocks, parseSegments } from "./segments";
 import { diffLines, diffStats, hunks } from "./diff";
 import { applyNote, cleanPath, getFile } from "./apply";
-import { SYSTEM_PROMPT, contextHeader, dailyPrompt, polishPrompt, savePrompt } from "./prompts";
-import { openToday, recentDailies } from "./daily";
+import { contextHeader, polishPrompt, savePrompt, systemPrompt } from "./prompts";
+import { SNAPSHOT_PATH } from "./assistant/config";
+import { saveTextToInbox } from "./assistant/inbox";
+import { runMorning } from "./assistant/morning";
 
 export const VIEW_TYPE = "claude-sidebar-view";
 
@@ -26,6 +28,13 @@ export interface ToolUse {
   name: string;
   detail: string;
   path?: string;
+  icon?: string;
+}
+
+/** 브리핑·자료 정리처럼 채팅과 따로 도는 작업의 진행 표시 */
+export interface Task {
+  step(icon: string, detail: string): void;
+  finish(text: string, error?: string): Promise<void>;
 }
 
 export interface ChatMsg {
@@ -59,7 +68,7 @@ const MODE_ICON: Record<NoteMode, string> = {
   create: "file-plus",
 };
 const MODE_LABEL: Record<NoteMode, string> = { replace: "고침", prepend: "맨 위", append: "맨 끝", create: "새 노트" };
-const TOOL_ICON: Record<string, string> = { Grep: "search", Glob: "folder-search", Read: "file-text" };
+const TOOL_ICON: Record<string, string> = { Grep: "search", Glob: "folder-search", Read: "file-text", Bash: "terminal", WebFetch: "globe" };
 
 const baseName = (p: string) => p.split("/").pop()!.replace(/\.md$/, "");
 const lineCount = (s: string) => (s ? s.split("\n").length : 0);
@@ -76,7 +85,9 @@ export class ClaudeView extends ItemView {
   private runIdx = -1;
   private runStart = 0;
   private tick: number | null = null;
-  private renderTimer: number | null = null;
+  private renderTimers = new Map<number, number>();
+  /** 지금 진행 중인 메시지 (채팅, 브리핑, 자료 정리) */
+  private active = new Set<number>();
   private renderSeq = new Map<number, number>();
   private components = new Map<number, Component>();
   /** 제안 카드별 적용 전 내용 (비교·되돌리기용). 키: "메시지번호:블록번호" */
@@ -114,7 +125,8 @@ export class ClaudeView extends ItemView {
     const logo = head.createDiv("cs-logo");
     setIcon(logo, "bot");
     const actions = head.createDiv("cs-actions");
-    this.iconButton(actions, "calendar-check", "오늘 노트", () => void this.runDaily());
+    this.iconButton(actions, "calendar-check", "오늘 브리핑", () => void this.runBriefing());
+    this.iconButton(actions, "inbox", "자료 넣기 · 입력창 글이나 파일 (끌어다 놓아도 돼요)", () => this.pickMaterials());
     this.iconButton(actions, "sparkles", "지금 노트 다듬기", () => void this.runPolish());
     this.iconButton(actions, "save", "대화를 노트로 저장", () => void this.runSave());
     this.iconButton(actions, "square-pen", "새 대화", () => this.newChat());
@@ -142,6 +154,23 @@ export class ClaudeView extends ItemView {
     this.inputEl.addEventListener("input", () => this.autoGrow());
     this.inputEl.addEventListener("focus", () => this.updateCtx());
     this.sendBtn.addEventListener("click", () => (this.run ? this.run.stop() : this.submit()));
+
+    // 파일을 끌어다 놓으면 받은자료에 넣고 정리
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    this.registerDomEvent(root, "dragover", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      root.addClass("is-drop");
+    });
+    this.registerDomEvent(root, "dragleave", (e) => {
+      if (!root.contains(e.relatedTarget as Node | null)) root.removeClass("is-drop");
+    });
+    this.registerDomEvent(root, "drop", (e) => {
+      root.removeClass("is-drop");
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      void this.addFiles(Array.from(e.dataTransfer?.files ?? []));
+    });
 
     this.renderAll();
     this.updateCtx();
@@ -273,16 +302,26 @@ export class ClaudeView extends ItemView {
       b.createSpan({ text });
       b.addEventListener("click", fn);
     };
-    pill("calendar-check", "오늘", () => void this.runDaily());
+    pill("calendar-check", "오늘", () => void this.runBriefing());
+    pill("inbox", "자료", () => this.pickMaterials());
     pill("sparkles", "다듬기", () => void this.runPolish());
   }
 
   private scheduleRender(i: number): void {
-    if (this.renderTimer !== null) return;
-    this.renderTimer = window.setTimeout(() => {
-      this.renderTimer = null;
-      void this.renderMsg(i);
-    }, 60);
+    if (this.renderTimers.has(i)) return;
+    this.renderTimers.set(
+      i,
+      window.setTimeout(() => {
+        this.renderTimers.delete(i);
+        void this.renderMsg(i);
+      }, 60),
+    );
+  }
+
+  private cancelRender(i: number): void {
+    const t = this.renderTimers.get(i);
+    if (t !== undefined) window.clearTimeout(t);
+    this.renderTimers.delete(i);
   }
 
   /** 새 내용을 화면 밖에서 다 그린 뒤 한 번에 바꿔 끼웁니다 (깜빡임 방지). */
@@ -323,7 +362,7 @@ export class ClaudeView extends ItemView {
   }
 
   private drawBot(el: HTMLElement, i: number, m: ChatMsg, comp: Component, jobs: Promise<unknown>[]): void {
-    const running = !!this.run && this.runIdx === i;
+    const running = this.active.has(i);
 
     if (m.tools?.length) this.drawTools(el, m.tools);
 
@@ -341,7 +380,7 @@ export class ClaudeView extends ItemView {
       t.createSpan("cs-dot");
       t.createSpan("cs-dot");
       t.createSpan("cs-dot");
-      t.createSpan({ cls: "cs-secs", text: this.elapsed() });
+      if (i === this.runIdx) t.createSpan({ cls: "cs-secs", text: this.elapsed() });
     }
 
     if (m.error) {
@@ -369,7 +408,7 @@ export class ClaudeView extends ItemView {
     if (tools.length > shown.length) row.createSpan({ cls: "cs-tool cs-tool-more", text: `+${tools.length - shown.length}` });
     for (const t of shown) {
       const chip = row.createSpan("cs-tool");
-      setIcon(chip.createSpan("cs-tool-icon"), TOOL_ICON[t.name] ?? "wrench");
+      setIcon(chip.createSpan("cs-tool-icon"), t.icon ?? TOOL_ICON[t.name] ?? "wrench");
       chip.createSpan({ cls: "cs-tool-text", text: t.detail });
       if (t.path) {
         chip.addClass("is-link");
@@ -518,7 +557,9 @@ export class ClaudeView extends ItemView {
   }
 
   private setRunning(idx: number): void {
+    if (this.runIdx >= 0) this.active.delete(this.runIdx);
     this.runIdx = idx;
+    if (idx >= 0) this.active.add(idx);
     const on = idx >= 0;
     this.contentEl.toggleClass("is-running", on);
     setIcon(this.sendBtn, on ? "square" : "arrow-up");
@@ -551,6 +592,8 @@ export class ClaudeView extends ItemView {
       return { name, detail: baseName(rel), path: getFile(this.app, rel) ? rel : undefined };
     }
     if (name === "Grep" || name === "Glob") return { name, detail: str(input.pattern) };
+    if (name === "Bash") return { name, detail: str(input.command).replace(/^git -C (?:"[^"]*"|'[^']*'|\S+) /, "git ").slice(0, 48) };
+    if (name === "WebFetch") return { name, detail: str(input.url).replace(/^https?:\/\//, "").split("/")[0] };
     return { name, detail: name };
   }
 
@@ -597,10 +640,16 @@ export class ClaudeView extends ItemView {
       claudePath,
       cwd: this.plugin.vaultPath(),
       prompt,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: systemPrompt({
+        projectFolder: this.plugin.settings.projectFolder,
+        materialsFolder: this.plugin.settings.materialsFolder,
+        snapshotPath: SNAPSHOT_PATH,
+      }),
       model: this.plugin.settings.model || undefined,
       effort: this.plugin.settings.effort || undefined,
       resume,
+      addDirs: this.plugin.projectDirs(),
+      allowGitRead: true,
       onEvent: (e) => {
         if (e.type === "session") {
           chat.sessionId = e.id;
@@ -634,10 +683,7 @@ export class ClaudeView extends ItemView {
 
     a.ms = Date.now() - this.runStart;
     if (!ok) a.error = friendlyError(failText);
-    if (this.renderTimer !== null) {
-      window.clearTimeout(this.renderTimer);
-      this.renderTimer = null;
-    }
+    this.cancelRender(idx);
     this.setRunning(-1);
     await this.renderMsg(idx);
     void this.plugin.saveChat();
@@ -645,18 +691,121 @@ export class ClaudeView extends ItemView {
 
   // ─── 빠른 버튼 ────────────────────────────────────────────
 
-  async runDaily(): Promise<void> {
-    if (this.run) return;
-    const today = await openToday(this.app);
-    const recent = recentDailies(this.app, 3);
-    if (!recent.length) {
-      new Notice("이전 데일리 노트가 없어요");
+  /** 오늘 브리핑: GitHub·폴더를 살피고, 프로젝트 노트와 현황표를 고치고, 오늘 할 일을 데일리 노트에 씀 */
+  async runBriefing(): Promise<void> {
+    if (this.run) {
+      new Notice("답하는 중이에요");
       return;
     }
-    const notes = await Promise.all(
-      recent.map(async (f) => ({ path: f.path, content: (await this.app.vault.cachedRead(f)).slice(0, 6000) })),
-    );
-    await this.send("", { label: "오늘", icon: "calendar-check", prompt: dailyPrompt(today.path, notes), context: "date" });
+    if (!this.plugin.claudePath()) {
+      new Notice("Claude Code를 찾지 못했어요. 설정에서 경로를 넣어 주세요.");
+      return;
+    }
+    if (!this.msgs.length) this.msgsEl.empty();
+    this.msgs.push({ role: "user", text: "", label: "오늘 브리핑", icon: "calendar-check" });
+    this.msgs.push({ role: "assistant", text: "", tools: [] });
+    const idx = this.msgs.length - 1;
+    const m = this.msgs[idx];
+    const chat = this.plugin.chat;
+    await this.renderMsg(idx - 1);
+
+    let aborted = false;
+    let current: RunHandle | null = null;
+    let resolveDone: () => void = () => undefined;
+    this.run = {
+      stop: () => {
+        aborted = true;
+        current?.stop();
+      },
+      done: new Promise<void>((r) => (resolveDone = r)),
+    };
+    this.setRunning(idx);
+    await this.renderMsg(idx);
+    this.scrollBottom();
+
+    try {
+      const r = await runMorning(this.plugin.assistantConfig(), {
+        step: (icon, detail) => {
+          (m.tools ??= []).push({ name: "step", detail, icon });
+          this.scheduleRender(idx);
+        },
+        onClaude: (h) => (current = h),
+        isAborted: () => aborted,
+        log: (s) => console.log("[claude-sidebar]", s),
+        skipInbox: true,
+      });
+      m.text = r.block;
+      void this.app.workspace.openLinkText(r.todayPath, "", false);
+    } catch (e) {
+      m.error = friendlyError((e as Error).message);
+    } finally {
+      this.run = null;
+      resolveDone();
+    }
+    m.ms = Date.now() - this.runStart;
+    this.cancelRender(idx);
+    this.setRunning(-1);
+    if (chat === this.plugin.chat) {
+      await this.renderMsg(idx);
+      void this.plugin.saveChat();
+    }
+    this.plugin.queueInbox();
+  }
+
+  /** 채팅과 따로 도는 작업(자료 정리)을 메시지로 보여 줍니다. */
+  startTask(label: string, icon: string): Task {
+    if (!this.msgs.length) this.msgsEl.empty();
+    this.msgs.push({ role: "user", text: "", label, icon });
+    void this.renderMsg(this.msgs.length - 1);
+    this.msgs.push({ role: "assistant", text: "", tools: [] });
+    const idx = this.msgs.length - 1;
+    const m = this.msgs[idx];
+    const chat = this.plugin.chat;
+    const t0 = Date.now();
+    this.active.add(idx);
+    void this.renderMsg(idx).then(() => this.scrollBottom());
+    return {
+      step: (ic, detail) => {
+        if (chat !== this.plugin.chat) return;
+        (m.tools ??= []).push({ name: "step", detail, icon: ic });
+        this.scheduleRender(idx);
+      },
+      finish: async (text, error) => {
+        m.text = text;
+        m.error = error;
+        m.ms = Date.now() - t0;
+        this.active.delete(idx);
+        if (chat !== this.plugin.chat) return;
+        this.cancelRender(idx);
+        await this.renderMsg(idx);
+        void this.plugin.saveChat();
+      },
+    };
+  }
+
+  /** 📥 버튼: 입력창에 글이 있으면 그 글을, 없으면 파일을 골라 받은자료에 넣고 정리 */
+  pickMaterials(): void {
+    const text = this.inputEl.value.trim();
+    if (text) {
+      this.inputEl.value = "";
+      this.autoGrow();
+      saveTextToInbox(this.plugin.assistantConfig(), text);
+      this.plugin.queueInbox(text.split("\n")[0].slice(0, 30));
+      return;
+    }
+    const input = createEl("input", { type: "file", attr: { multiple: "" } });
+    input.addEventListener("change", () => void this.addFiles(Array.from(input.files ?? [])));
+    input.click();
+  }
+
+  async addFiles(files: File[]): Promise<void> {
+    if (!files.length) return;
+    try {
+      for (const f of files) await this.plugin.writeToInbox(f.name, await f.arrayBuffer());
+      this.plugin.queueInbox(files.length > 1 ? `${files[0].name} 외 ${files.length - 1}개` : files[0].name);
+    } catch (e) {
+      new Notice(`자료를 넣지 못했어요: ${(e as Error).message}`);
+    }
   }
 
   async runPolish(): Promise<void> {

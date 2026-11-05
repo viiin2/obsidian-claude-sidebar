@@ -17,7 +17,7 @@ fi
 
 DEST="$VAULT/.obsidian/plugins/claude-sidebar"
 mkdir -p "$DEST"
-cp main.js manifest.json styles.css "$DEST/"
+cp main.js manifest.json styles.css assistant.js "$DEST/"
 
 # 노트만 검색하도록 (iCloud에서 안 받은 첨부파일에서 검색이 멈추는 것 방지)
 [ -f "$VAULT/.rgignore" ] || cp rgignore.template "$VAULT/.rgignore"

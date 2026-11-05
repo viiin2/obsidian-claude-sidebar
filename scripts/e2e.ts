@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { findClaude, runClaude } from "../src/claude";
-import { SYSTEM_PROMPT, contextHeader, polishPrompt } from "../src/prompts";
+import { contextHeader, polishPrompt, systemPrompt } from "../src/prompts";
 import { noteBlocks } from "../src/segments";
 
 const vault = mkdtempSync(join(tmpdir(), "cs-vault-"));
@@ -21,7 +21,7 @@ async function ask(prompt: string): Promise<{ text: string; tools: string[]; ok:
   let ok = false;
   const t0 = Date.now();
   const h = runClaude({
-    claudePath: claude!, cwd: vault, prompt, systemPrompt: SYSTEM_PROMPT, model: "sonnet", effort: "low",
+    claudePath: claude!, cwd: vault, prompt, systemPrompt: systemPrompt({ projectFolder: "프로젝트", materialsFolder: "자료", snapshotPath: "/없음.json" }), model: "sonnet", effort: "low",
     onEvent: (e) => {
       if (e.type === "text") text += e.delta;
       if (e.type === "tool") tools.push(`${e.name}(${JSON.stringify(e.input).slice(0, 60)})`);

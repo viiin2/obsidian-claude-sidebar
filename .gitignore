@@ -1,5 +1,6 @@
 node_modules/
 main.js
+assistant.js
 test-out/
 data.json
 .DS_Store

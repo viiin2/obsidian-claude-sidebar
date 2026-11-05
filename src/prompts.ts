@@ -1,6 +1,6 @@
 // Claude에게 보내는 지시문 모음.
 
-export const SYSTEM_PROMPT = `너는 사용자의 옵시디언 볼트 안에서 일하는 노트 도우미야. 작업 폴더가 볼트 루트야.
+const BASE_PROMPT = `너는 사용자의 옵시디언 볼트 안에서 일하는 노트 도우미야. 작업 폴더가 볼트 루트야.
 
 # 답하는 방식
 - 한국어로, 짧게. 결론 먼저 말하고 필요한 만큼만 덧붙여.
@@ -29,6 +29,16 @@ mode는 넷 중 하나:
 - 블록을 코드펜스(\`\`\`)로 감싸지 마.
 - 블록 밖에는 무엇을 바꿨는지 한두 줄만 쓰고, 블록 내용을 다시 늘어놓지 마.`;
 
+export function systemPrompt(o: { projectFolder: string; materialsFolder: string; snapshotPath: string }): string {
+  return `${BASE_PROMPT}
+
+# 프로젝트와 자료 (볼트 밖도 볼 수 있어)
+- 프로젝트 노트는 \`${o.projectFolder}/\` 폴더에 있어. 프로젝트마다 "## 할 일" 체크리스트가 있고, 현황표는 \`${o.projectFolder}/현황.md\`.
+- GitHub과 이 맥의 폴더에서 모은 최신 현황(JSON)은 ${o.snapshotPath} 에 있어. 프로젝트 질문엔 먼저 이걸 읽어.
+- 프로젝트 폴더도 Read/Grep 할 수 있어. git 기록은 \`git -C <폴더> log|status|diff|show ...\`, GitHub은 \`gh issue list -R 소유자/저장소\`, \`gh pr list -R ...\`, \`gh repo view ...\` 로만 조회해. 다른 명령은 막혀 있어.
+- 사용자가 정리해 둔 자료는 \`${o.materialsFolder}/<분류>/\` 에 있어.`;
+}
+
 export interface Context {
   today: string;
   notePath?: string | null;
@@ -40,28 +50,6 @@ export function contextHeader(c: Context): string {
   if (c.notePath) lines.push(`열린 노트: ${c.notePath}`);
   if (c.selection) lines.push(`선택한 부분:\n"""\n${c.selection}\n"""`);
   return `[맥락]\n${lines.join("\n")}\n[/맥락]`;
-}
-
-export function dailyPrompt(todayPath: string, recent: { path: string; content: string }[]): string {
-  const notes = recent.map((r) => `=== ${r.path} ===\n${r.content.trim() || "(빈 노트)"}`).join("\n\n");
-  return `[할 일: 오늘 데일리 노트]
-오늘 노트: ${todayPath}
-
-최근 데일리 노트 (최신순):
-${notes}
-
-위 노트들을 보고, 오늘 노트 맨 위에 붙일 짧은 블록을 <note path="${todayPath}" mode="prepend"> 로 만들어줘.
-
-형식:
-> [!summary] 최근
-> - MM/DD 그날 핵심 한 줄
-(날짜마다 한 줄씩, 빈 노트는 빼)
-
-### 이어서
-- [ ] 안 끝난 체크박스, "해야 함/준비/마감"처럼 남은 일로 보이는 것
-(남은 일이 없으면 이 부분은 통째로 빼. 최대 6개)
-
-블록 밖에는 한 줄만 써.`;
 }
 
 export function polishPrompt(path: string, content: string): string {

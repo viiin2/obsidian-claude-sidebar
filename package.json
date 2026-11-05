@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit && node esbuild.config.mjs production",
-    "test": "node esbuild.config.mjs test && node --test test-out/*.test.js",
+    "test": "node esbuild.config.mjs test && node --test \"test-out/**/*.test.js\"",
     "install-vault": "npm run build && ./install.sh",
     "e2e": "esbuild scripts/e2e.ts --bundle --platform=node --outfile=test-out/e2e.js --log-level=warning && node test-out/e2e.js"
   },

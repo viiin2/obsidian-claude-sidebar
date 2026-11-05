@@ -2,9 +2,7 @@
 // 로그인된 구독으로 돌아가므로 API 키가 필요 없습니다.
 
 import { spawn } from "child_process";
-import { existsSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { findBin, toolEnv } from "./exec";
 import { ClaudeEvent, StreamParser } from "./stream";
 
 export interface RunOptions {
@@ -15,35 +13,35 @@ export interface RunOptions {
   model?: string;
   effort?: string;
   resume?: string | null;
+  /** 볼트 밖에서 읽어도 되는 폴더 (프로젝트 폴더 등) */
+  addDirs?: string[];
+  /** git·gh 조회 명령 허용 (쓰기 명령은 막힘) */
+  allowGitRead?: boolean;
+  /** 웹 페이지 읽기 허용 (받은 링크 정리용) */
+  allowWeb?: boolean;
   onEvent: (e: ClaudeEvent) => void;
 }
+
+// 조회만 허용. 그 밖의 명령은 --permission-prompts none 때문에 자동으로 거부됩니다.
+const GIT_READ_RULES = [
+  "Bash(git -C * log)", "Bash(git -C * log *)",
+  "Bash(git -C * status)", "Bash(git -C * status *)",
+  "Bash(git -C * diff)", "Bash(git -C * diff *)",
+  "Bash(git -C * show *)",
+  "Bash(git -C * branch --show-current)",
+  "Bash(gh repo view *)", "Bash(gh repo list *)",
+  "Bash(gh issue list *)", "Bash(gh issue view *)",
+  "Bash(gh pr list *)", "Bash(gh pr view *)",
+];
+const GIT_READ_DENY = ["Bash(*--output*)", "Bash(*>*)"];
 
 export interface RunHandle {
   stop(): void;
   done: Promise<void>;
 }
 
-const CANDIDATES = [
-  join(homedir(), ".local/bin/claude"),
-  join(homedir(), ".claude/local/claude"),
-  "/opt/homebrew/bin/claude",
-  "/usr/local/bin/claude",
-];
-
 export function findClaude(custom?: string): string | null {
-  if (custom?.trim()) return existsSync(custom.trim()) ? custom.trim() : null;
-  return CANDIDATES.find((p) => existsSync(p)) ?? null;
-}
-
-function childEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  // 옵시디언은 터미널 PATH를 물려받지 않으므로 흔한 위치를 붙여 줍니다.
-  const extra = [join(homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
-  env.PATH = [env.PATH ?? "", ...extra].filter(Boolean).join(":");
-  // 터미널의 Claude Code 안에서 옵시디언을 켰을 때 중첩 실행으로 오인하지 않도록
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
-  return env;
+  return findBin("claude", custom);
 }
 
 export function runClaude(o: RunOptions): RunHandle {
@@ -53,7 +51,7 @@ export function runClaude(o: RunOptions): RunHandle {
     "--verbose",
     "--include-partial-messages",
     // 읽기 전용: 파일 수정은 사이드바의 [적용] 버튼으로만
-    "--tools", "Read,Glob,Grep",
+    "--tools", ["Read", "Glob", "Grep", o.allowGitRead ? "Bash" : "", o.allowWeb ? "WebFetch" : ""].filter(Boolean).join(","),
     "--permission-prompts", "none",
     "--strict-mcp-config",
     "--disable-slash-commands",
@@ -62,11 +60,16 @@ export function runClaude(o: RunOptions): RunHandle {
   if (o.model) args.push("--model", o.model);
   if (o.effort) args.push("--effort", o.effort);
   if (o.resume) args.push("--resume", o.resume);
+  const allow = [...(o.allowGitRead ? GIT_READ_RULES : []), ...(o.allowWeb ? ["WebFetch"] : [])];
+  if (allow.length) args.push("--allowedTools", ...allow);
+  if (o.allowGitRead) args.push("--disallowedTools", ...GIT_READ_DENY);
+  const dirs = (o.addDirs ?? []).filter(Boolean);
+  if (dirs.length) args.push("--add-dir", ...dirs);
 
   let stopped = false;
   let stderr = "";
   const parser = new StreamParser(o.onEvent);
-  const child = spawn(o.claudePath, args, { cwd: o.cwd, env: childEnv(), stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(o.claudePath, args, { cwd: o.cwd, env: toolEnv(), stdio: ["pipe", "pipe", "pipe"] });
 
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (c: string) => parser.push(c));
@@ -102,7 +105,7 @@ export function runClaude(o: RunOptions): RunHandle {
 /** 설정 화면의 "연결 확인" 버튼용 */
 export function claudeVersion(claudePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(claudePath, ["--version"], { env: childEnv() });
+    const child = spawn(claudePath, ["--version"], { env: toolEnv() });
     let out = "";
     child.stdout.on("data", (c) => (out += c));
     child.on("error", reject);
