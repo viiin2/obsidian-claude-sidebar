@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { checklistProgress, readFm, setFm, upsertBriefing, BRIEF_START, BRIEF_END, renderDashboard, progressBar } from "./projects";
+import { checklistProgress, readFm, setFm, upsertBriefing, getBriefing, carryChecks, BRIEF_START, BRIEF_END, renderDashboard, progressBar } from "./projects";
 import { formatDate, relDay } from "./datefmt";
 
 const NOTE = `---
@@ -65,4 +65,22 @@ test("날짜 형식", () => {
   assert.equal(formatDate(d, "YYYY-MM-DD (ddd) HH:mm"), "2026-11-05 (목) 08:03");
   assert.equal(formatDate(d, "[Daily]/YYYY/M/D"), "Daily/2026/11/5");
   assert.equal(relDay("2026-11-02", "2026-11-05"), "3일 전");
+});
+
+test("점심 칸은 아침 칸 바로 아래, 저녁 칸은 맨 끝, 다시 하면 그 자리만 교체", () => {
+  let md = upsertBriefing("오늘 메모\n", "아침");
+  md = upsertBriefing(md, "점심", "midday");
+  md = upsertBriefing(md, "저녁", "evening");
+  assert.equal(md, `${BRIEF_START}\n아침\n${BRIEF_END}\n\n%% 비서 점심 %%\n점심\n%% 비서 점심 끝 %%\n\n오늘 메모\n\n%% 비서 저녁 %%\n저녁\n%% 비서 저녁 끝 %%\n`);
+  const again = upsertBriefing(md, "점심 2", "midday");
+  assert.equal(getBriefing(again, "midday"), "점심 2");
+  assert.equal(getBriefing(again, "morning"), "아침");
+  assert.equal(getBriefing(again, "evening"), "저녁");
+  assert.equal(upsertBriefing("", "저녁", "evening"), "%% 비서 저녁 %%\n저녁\n%% 비서 저녁 끝 %%\n");
+});
+
+test("다시 만든 브리핑에 체크 이어 붙이기", () => {
+  const old = "> [!todo] 오늘 할 일\n> - [x] [[a]] 로비 만들기 — 이유 ✅ 2026-11-05\n> - [ ] 📌 14:00 치과";
+  const fresh = "> [!todo] 오늘 할 일\n> - [ ] [[a]] 로비 만들기 — 이유\n> - [ ] [[b]] 새 일";
+  assert.equal(carryChecks(old, fresh), "> [!todo] 오늘 할 일\n> - [x] [[a]] 로비 만들기 — 이유\n> - [ ] [[b]] 새 일");
 });

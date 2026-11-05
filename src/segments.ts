@@ -4,6 +4,10 @@
 //   <note path="폴더/노트.md" mode="replace|prepend|append|create">
 //   내용
 //   </note>
+// 일정 블록 (바로 일정 목록에 들어감):
+//   <todo date="2026-11-07" time="14:00">치과</todo>
+// 루틴 블록 (바로 루틴 노트에 들어감):
+//   <routine days="매일" time="07:00">영어 단어 20개</routine>
 
 export type NoteMode = "replace" | "prepend" | "append" | "create";
 
@@ -23,10 +27,30 @@ export interface NoteSeg {
   complete: boolean;
 }
 
-export type Segment = TextSeg | NoteSeg;
+export interface TodoSeg {
+  kind: "todo";
+  /** 응답 안에서 몇 번째 일정인지 (0부터) */
+  index: number;
+  date: string;
+  time?: string;
+  text: string;
+  complete: boolean;
+}
 
-const OPEN = /<note\b([^>]*)>/g;
-const CLOSE = "</note>";
+export interface RoutineSeg {
+  kind: "routine";
+  index: number;
+  /** "매일", "평일", "월수금" … */
+  days: string;
+  time?: string;
+  text: string;
+  complete: boolean;
+}
+
+export type Segment = TextSeg | NoteSeg | TodoSeg | RoutineSeg;
+
+const OPEN = /<(note|todo|routine)\b([^>]*)>/g;
+const TAGS = ["<note", "<todo", "<routine"];
 const MODES: NoteMode[] = ["replace", "prepend", "append", "create"];
 
 function readAttrs(raw: string): Record<string, string> {
@@ -52,14 +76,14 @@ function hidePartialOpen(text: string): string {
   if (lt < 0) return text;
   const tail = text.slice(lt);
   if (tail.includes(">")) return text;
-  if ("<note".startsWith(tail) || tail.startsWith("<note")) return text.slice(0, lt);
+  if (TAGS.some((t) => t.startsWith(tail) || tail.startsWith(t))) return text.slice(0, lt);
   return text;
 }
 
 /** 블록 내용 끝에 걸린 "</no" 같은 반쪽 닫는 태그를 숨깁니다. */
-function hidePartialClose(body: string): string {
-  for (let n = CLOSE.length - 1; n > 0; n--) {
-    if (body.endsWith(CLOSE.slice(0, n))) return body.slice(0, -n);
+function hidePartialClose(body: string, close: string): string {
+  for (let n = close.length - 1; n > 0; n--) {
+    if (body.endsWith(close.slice(0, n))) return body.slice(0, -n);
   }
   return body;
 }
@@ -78,13 +102,15 @@ function stripWrappingFences(segs: Segment[]): Segment[] {
       }
     }
   }
-  return segs.filter((s) => s.kind === "note" || s.text.trim() !== "");
+  return segs.filter((s) => s.kind !== "text" || s.text.trim() !== "");
 }
 
 export function parseSegments(src: string, streaming = false): Segment[] {
   const out: Segment[] = [];
   let pos = 0;
   let index = 0;
+  let todoIndex = 0;
+  let routineIndex = 0;
   OPEN.lastIndex = 0;
 
   while (true) {
@@ -97,18 +123,38 @@ export function parseSegments(src: string, streaming = false): Segment[] {
     }
     out.push({ kind: "text", text: src.slice(pos, open.index) });
 
-    const attrs = readAttrs(open[1]);
+    const tag = open[1];
+    const attrs = readAttrs(open[2]);
     const bodyStart = open.index + open[0].length;
-    const close = src.indexOf(CLOSE, bodyStart);
-    const base = { kind: "note" as const, index: index++, path: (attrs.path ?? "").trim(), mode: toMode(attrs.mode) };
+    const closeTag = `</${tag}>`;
+    const close = src.indexOf(closeTag, bodyStart);
+    const done = close >= 0;
+    let body = done ? src.slice(bodyStart, close) : src.slice(bodyStart);
+    if (!done && streaming) body = hidePartialClose(body, closeTag);
 
-    if (close < 0) {
-      const body = src.slice(bodyStart);
-      out.push({ ...base, content: trimBody(streaming ? hidePartialClose(body) : body), complete: false });
-      break;
+    if (tag === "routine") {
+      out.push({
+        kind: "routine",
+        index: routineIndex++,
+        days: (attrs.days ?? "").trim(),
+        time: (attrs.time ?? "").trim() || undefined,
+        text: body.replace(/\s+/g, " ").trim(),
+        complete: done,
+      });
+    } else if (tag === "todo") {
+      out.push({
+        kind: "todo",
+        index: todoIndex++,
+        date: (attrs.date ?? "").trim(),
+        time: (attrs.time ?? "").trim() || undefined,
+        text: body.replace(/\s+/g, " ").trim(),
+        complete: done,
+      });
+    } else {
+      out.push({ kind: "note", index: index++, path: (attrs.path ?? "").trim(), mode: toMode(attrs.mode), content: trimBody(body), complete: done });
     }
-    out.push({ ...base, content: trimBody(src.slice(bodyStart, close)), complete: true });
-    pos = close + CLOSE.length;
+    if (!done) break;
+    pos = close + closeTag.length;
   }
 
   return stripWrappingFences(out);
@@ -116,4 +162,12 @@ export function parseSegments(src: string, streaming = false): Segment[] {
 
 export function noteBlocks(src: string): NoteSeg[] {
   return parseSegments(src).filter((s): s is NoteSeg => s.kind === "note");
+}
+
+export function todoBlocks(src: string): TodoSeg[] {
+  return parseSegments(src).filter((s): s is TodoSeg => s.kind === "todo");
+}
+
+export function routineBlocks(src: string): RoutineSeg[] {
+  return parseSegments(src).filter((s): s is RoutineSeg => s.kind === "routine");
 }

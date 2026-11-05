@@ -14,13 +14,16 @@ import {
 } from "obsidian";
 import type ClaudeSidebarPlugin from "./main";
 import { RunHandle, runClaude } from "./claude";
-import { NoteMode, NoteSeg, noteBlocks, parseSegments } from "./segments";
+import { NoteMode, NoteSeg, RoutineSeg, TodoSeg, noteBlocks, parseSegments, routineBlocks, todoBlocks } from "./segments";
 import { diffLines, diffStats, hunks } from "./diff";
 import { applyNote, cleanPath, getFile } from "./apply";
 import { contextHeader, polishPrompt, savePrompt, systemPrompt } from "./prompts";
-import { SNAPSHOT_PATH } from "./assistant/config";
+import { SNAPSHOT_PATH, loadState } from "./assistant/config";
+import { AgendaItem, normTime, shortDate } from "./assistant/agenda";
+import { Routine, daysLabel, parseDays } from "./assistant/routines";
 import { saveTextToInbox } from "./assistant/inbox";
-import { runMorning } from "./assistant/morning";
+import { runSlot } from "./assistant/briefing";
+import { SLOT_ICON, SLOT_LABEL, Slot, slotForNow } from "./assistant/slots";
 
 export const VIEW_TYPE = "claude-sidebar-view";
 
@@ -47,6 +50,10 @@ export interface ChatMsg {
   error?: string;
   /** assistant: 적용한 제안 블록 번호 */
   applied?: number[];
+  /** assistant: 일정 목록에 넣은 일정 블록 번호 */
+  added?: number[];
+  /** assistant: 루틴 노트에 넣은 루틴 블록 번호 */
+  addedRoutines?: number[];
   ms?: number;
 }
 
@@ -125,7 +132,7 @@ export class ClaudeView extends ItemView {
     const logo = head.createDiv("cs-logo");
     setIcon(logo, "bot");
     const actions = head.createDiv("cs-actions");
-    this.iconButton(actions, "calendar-check", "오늘 브리핑", () => void this.runBriefing());
+    this.iconButton(actions, "calendar-check", "브리핑 · 아침, 점심, 저녁 중 지금 시각에 맞게", () => void this.runBriefing());
     this.iconButton(actions, "inbox", "자료 넣기 · 입력창 글이나 파일 (끌어다 놓아도 돼요)", () => this.pickMaterials());
     this.iconButton(actions, "sparkles", "지금 노트 다듬기", () => void this.runPolish());
     this.iconButton(actions, "save", "대화를 노트로 저장", () => void this.runSave());
@@ -302,7 +309,7 @@ export class ClaudeView extends ItemView {
       b.createSpan({ text });
       b.addEventListener("click", fn);
     };
-    pill("calendar-check", "오늘", () => void this.runBriefing());
+    pill("calendar-check", "브리핑", () => void this.runBriefing());
     pill("inbox", "자료", () => this.pickMaterials());
     pill("sparkles", "다듬기", () => void this.runPolish());
   }
@@ -370,6 +377,10 @@ export class ClaudeView extends ItemView {
       if (s.kind === "text") {
         const md = el.createDiv("cs-md");
         jobs.push(MarkdownRenderer.render(this.app, s.text, md, "", comp));
+      } else if (s.kind === "todo") {
+        this.drawTodo(el, i, m, s);
+      } else if (s.kind === "routine") {
+        this.drawRoutine(el, i, m, s);
       } else {
         jobs.push(this.drawCard(el, i, m, s, comp));
       }
@@ -508,6 +519,100 @@ export class ClaudeView extends ItemView {
     }
   }
 
+  // ─── 일정 ─────────────────────────────────────────────────
+
+  private todoItem(s: TodoSeg): AgendaItem | null {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s.date) || !s.text) return null;
+    return { date: s.date, time: normTime(s.time), text: s.text, done: false };
+  }
+
+  private drawTodo(parent: HTMLElement, i: number, m: ChatMsg, s: TodoSeg): void {
+    const added = m.added?.includes(s.index) ?? false;
+    const it = s.complete ? this.todoItem(s) : null;
+    const row = parent.createDiv("cs-todo");
+    row.toggleClass("is-writing", !s.complete);
+    row.toggleClass("is-added", added);
+    setIcon(row.createSpan("cs-todo-icon"), added ? "calendar-check-2" : "calendar-plus");
+    const when = /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? shortDate(s.date) : s.date;
+    row.createSpan({ cls: "cs-todo-when", text: `${when}${s.time ? ` ${s.time}` : ""}` });
+    const text = row.createSpan({ cls: "cs-todo-text", text: s.text });
+    if (!it) {
+      if (s.complete) row.addClass("is-bad");
+      return;
+    }
+    const file = this.plugin.settings.agendaFile;
+    text.setAttr("aria-label", file);
+    text.addEventListener("click", () => void this.app.workspace.openLinkText(file, "", false));
+    const btn = row.createEl("button", { cls: "cs-icon-btn clickable-icon", attr: { "aria-label": added ? "일정에서 빼기" : "일정에 넣기" } });
+    setIcon(btn, added ? "undo-2" : "plus");
+    btn.addEventListener("click", () => void this.toggleTodo(i, s, !added));
+  }
+
+  private async toggleTodo(i: number, s: TodoSeg, add: boolean): Promise<void> {
+    const m = this.msgs[i];
+    const it = this.todoItem(s);
+    if (!m || !it) return;
+    try {
+      if (add) {
+        this.plugin.addAgenda(it);
+        if (!m.added?.includes(s.index)) m.added = [...(m.added ?? []), s.index];
+      } else {
+        this.plugin.removeAgenda(it);
+        m.added = (m.added ?? []).filter((x) => x !== s.index);
+      }
+      void this.plugin.saveChat();
+      await this.renderMsg(i);
+    } catch (e) {
+      new Notice(`일정을 ${add ? "넣지" : "빼지"} 못했어요: ${(e as Error).message}`);
+    }
+  }
+
+  private routineItem(s: RoutineSeg): Routine | null {
+    const days = parseDays(s.days || "매일");
+    if (!days || !s.text) return null;
+    return { time: normTime(s.time), text: s.text, days };
+  }
+
+  private drawRoutine(parent: HTMLElement, i: number, m: ChatMsg, s: RoutineSeg): void {
+    const added = m.addedRoutines?.includes(s.index) ?? false;
+    const r = s.complete ? this.routineItem(s) : null;
+    const row = parent.createDiv("cs-todo is-routine");
+    row.toggleClass("is-writing", !s.complete);
+    row.toggleClass("is-added", added);
+    setIcon(row.createSpan("cs-todo-icon"), "repeat");
+    row.createSpan({ cls: "cs-todo-when", text: `${r ? daysLabel(r.days) : s.days}${s.time ? ` ${s.time}` : ""}` });
+    const text = row.createSpan({ cls: "cs-todo-text", text: s.text });
+    if (!r) {
+      if (s.complete) row.addClass("is-bad");
+      return;
+    }
+    const file = this.plugin.settings.routineFile;
+    text.setAttr("aria-label", file);
+    text.addEventListener("click", () => void this.app.workspace.openLinkText(file, "", false));
+    const btn = row.createEl("button", { cls: "cs-icon-btn clickable-icon", attr: { "aria-label": added ? "루틴에서 빼기" : "루틴에 넣기" } });
+    setIcon(btn, added ? "undo-2" : "plus");
+    btn.addEventListener("click", () => void this.toggleRoutine(i, s, !added));
+  }
+
+  private async toggleRoutine(i: number, s: RoutineSeg, add: boolean): Promise<void> {
+    const m = this.msgs[i];
+    const r = this.routineItem(s);
+    if (!m || !r) return;
+    try {
+      if (add) {
+        this.plugin.addRoutine(r);
+        if (!m.addedRoutines?.includes(s.index)) m.addedRoutines = [...(m.addedRoutines ?? []), s.index];
+      } else {
+        this.plugin.removeRoutine(r);
+        m.addedRoutines = (m.addedRoutines ?? []).filter((x) => x !== s.index);
+      }
+      void this.plugin.saveChat();
+      await this.renderMsg(i);
+    } catch (e) {
+      new Notice(`루틴을 ${add ? "넣지" : "빼지"} 못했어요: ${(e as Error).message}`);
+    }
+  }
+
   private async applyBlock(i: number, s: NoteSeg): Promise<void> {
     const m = this.msgs[i];
     const key = `${i}:${s.index}`;
@@ -576,7 +681,7 @@ export class ClaudeView extends ItemView {
   }
 
   private context(kind: "full" | "date"): string {
-    const today = moment().format("YYYY-MM-DD (ddd)");
+    const today = moment().format("YYYY-MM-DD (ddd) HH:mm");
     if (kind === "date" || !this.includeNote) return contextHeader({ today });
     const f = this.plugin.lastFile();
     const sel = this.plugin.lastSelection();
@@ -628,6 +733,11 @@ export class ClaudeView extends ItemView {
     if (o.autoApply && !a.error) {
       for (const b of noteBlocks(a.text)) if (b.complete) await this.applyBlock(idx, b);
     }
+    // 말한 일정은 묻지 않고 바로 일정 목록에 넣음 (카드에서 빼기 가능)
+    if (!a.error) {
+      for (const t of todoBlocks(a.text)) if (t.complete && !a.added?.includes(t.index)) await this.toggleTodo(idx, t, true);
+      for (const r of routineBlocks(a.text)) if (r.complete && !a.addedRoutines?.includes(r.index)) await this.toggleRoutine(idx, r, true);
+    }
   }
 
   private async execute(idx: number, prompt: string, claudePath: string, retried: boolean): Promise<void> {
@@ -646,6 +756,8 @@ export class ClaudeView extends ItemView {
         projectFolder: this.plugin.settings.projectFolder,
         materialsFolder: this.plugin.settings.materialsFolder,
         snapshotPath: SNAPSHOT_PATH,
+        agendaFile: this.plugin.settings.agendaFile,
+        routineFile: this.plugin.settings.routineFile,
       }),
       model: this.plugin.settings.model || undefined,
       effort: this.plugin.settings.effort || undefined,
@@ -693,8 +805,11 @@ export class ClaudeView extends ItemView {
 
   // ─── 빠른 버튼 ────────────────────────────────────────────
 
-  /** 오늘 브리핑: GitHub·폴더를 살피고, 프로젝트 노트와 현황표를 고치고, 오늘 할 일을 데일리 노트에 씀 */
-  async runBriefing(): Promise<void> {
+  /**
+   * 브리핑: 아침(오늘 할 일), 점심(오후 점검), 저녁(오늘 회고). 정하지 않으면 지금 시각에 맞는 것.
+   * GitHub·폴더를 살피고, 프로젝트 노트와 현황표를 고치고, 데일리 노트에 씀
+   */
+  async runBriefing(slot?: Slot): Promise<void> {
     if (this.run) {
       new Notice("답하는 중이에요");
       return;
@@ -703,8 +818,10 @@ export class ClaudeView extends ItemView {
       new Notice("Claude Code를 찾지 못했어요. 설정에서 경로를 넣어 주세요.");
       return;
     }
+    const cfg = this.plugin.assistantConfig();
+    const which = slot ?? slotForNow(cfg, loadState(), new Date());
     if (!this.msgs.length) this.msgsEl.empty();
-    this.msgs.push({ role: "user", text: "", label: "오늘 브리핑", icon: "calendar-check" });
+    this.msgs.push({ role: "user", text: "", label: SLOT_LABEL[which], icon: SLOT_ICON[which] });
     this.msgs.push({ role: "assistant", text: "", tools: [] });
     const idx = this.msgs.length - 1;
     const m = this.msgs[idx];
@@ -726,7 +843,7 @@ export class ClaudeView extends ItemView {
     this.scrollBottom();
 
     try {
-      const r = await runMorning(this.plugin.assistantConfig(), {
+      const r = await runSlot(cfg, which, {
         step: (icon, detail) => {
           (m.tools ??= []).push({ name: "step", detail, icon });
           this.scheduleRender(idx);

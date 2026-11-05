@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { findClaude, runClaude } from "../src/claude";
 import { contextHeader, polishPrompt, systemPrompt } from "../src/prompts";
-import { noteBlocks } from "../src/segments";
+import { noteBlocks, routineBlocks, todoBlocks } from "../src/segments";
 
 const vault = mkdtempSync(join(tmpdir(), "cs-vault-"));
 mkdirSync(join(vault, "회의"));
@@ -21,7 +21,7 @@ async function ask(prompt: string): Promise<{ text: string; tools: string[]; ok:
   let ok = false;
   const t0 = Date.now();
   const h = runClaude({
-    claudePath: claude!, cwd: vault, prompt, systemPrompt: systemPrompt({ projectFolder: "프로젝트", materialsFolder: "자료", snapshotPath: "/없음.json" }), model: "sonnet", effort: "low",
+    claudePath: claude!, cwd: vault, prompt, systemPrompt: systemPrompt({ projectFolder: "프로젝트", materialsFolder: "자료", snapshotPath: "/없음.json", agendaFile: "일정.md", routineFile: "루틴.md" }), model: "sonnet", effort: "low",
     onEvent: (e) => {
       if (e.type === "text") text += e.delta;
       if (e.type === "tool") tools.push(`${e.name}(${JSON.stringify(e.input).slice(0, 60)})`);
@@ -44,6 +44,23 @@ async function ask(prompt: string): Promise<{ text: string; tools: string[]; ok:
   console.log(`\n② 다듬기 (${p.ms}ms, ok=${p.ok}) 블록 ${blocks.length}개\n${p.text}`);
   const pPass = p.ok && blocks.length === 1 && blocks[0].complete && blocks[0].mode === "replace" && blocks[0].path === "메모.md";
 
-  console.log(`\n결과: 질문 ${qPass ? "통과" : "실패"} · 다듬기 ${pPass ? "통과" : "실패"}`);
-  process.exit(qPass && pPass ? 0 : 1);
+  const t = await ask(`${contextHeader({ today: "2026-11-05 (목) 15:20" })}\n\n금요일 오후 3시에 치과 가야 하고, 다음 주 화요일까지 보고서 내야 해`);
+  const todos = todoBlocks(t.text);
+  console.log(`\n③ 일정 넣기 (${t.ms}ms, ok=${t.ok}) 일정 ${todos.length}개\n${t.text}`);
+  const tPass =
+    t.ok &&
+    todos.some((x) => x.date === "2026-11-06" && x.time === "15:00" && x.text.includes("치과")) &&
+    todos.some((x) => x.date === "2026-11-10" && x.text.includes("보고서"));
+
+  const r = await ask(`${contextHeader({ today: "2026-11-05 (목) 15:20" })}\n\n매일 아침 7시에 영어 단어 외우는 루틴 넣어줘. 월수금엔 헬스도`);
+  const rs = routineBlocks(r.text);
+  console.log(`\n④ 루틴 넣기 (${r.ms}ms, ok=${r.ok}) 루틴 ${rs.length}개\n${r.text}`);
+  const rPass =
+    r.ok &&
+    todoBlocks(r.text).length === 0 &&
+    rs.some((x) => x.days === "매일" && x.time === "07:00" && x.text.includes("영어")) &&
+    rs.some((x) => x.days.replace(/\s/g, "") === "월수금" && x.text.includes("헬스"));
+
+  console.log(`\n결과: 질문 ${qPass ? "통과" : "실패"} · 다듬기 ${pPass ? "통과" : "실패"} · 일정 ${tPass ? "통과" : "실패"} · 루틴 ${rPass ? "통과" : "실패"}`);
+  process.exit(qPass && pPass && tPass && rPass ? 0 : 1);
 })();

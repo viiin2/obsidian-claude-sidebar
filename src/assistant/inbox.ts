@@ -1,7 +1,7 @@
 // 받은자료 정리: 볼트의 "받은자료" 폴더에 들어온 파일·글·링크를 Claude가 읽고
 // 요약 노트로 만들어 "자료/<분류>/" 에 저장합니다. 원본 파일은 첨부파일 폴더로 옮겨 노트에 넣습니다.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { promises as fsp } from "fs";
 import { basename, dirname, extname, join, relative, sep } from "path";
 import { RunHandle, runClaude } from "../claude";
@@ -59,20 +59,54 @@ function uniquePath(abs: string): string {
 
 const safeSeg = (s: string) => s.replace(/[\\/:*?"<>|#^[\]]/g, "").replace(/\s+/g, " ").trim();
 
-/** 받은자료 폴더의 처리할 파일 목록 (숨김 파일, 폴더 제외) */
+/** 받은자료 폴더의 처리할 파일 목록 (숨김 파일 제외). 폴더째 넣은 것도 안쪽 파일까지 (깊이 3) */
 export function listInbox(cfg: AssistantConfig): string[] {
-  const dir = join(cfg.vault, cfg.inboxFolder);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => !f.startsWith(".") && !f.endsWith(".icloud"))
-    .filter((f) => {
+  const out: string[] = [];
+  const walk = (rel: string, depth: number) => {
+    let names: string[];
+    try {
+      names = readdirSync(join(cfg.vault, rel)).sort((a, b) => a.localeCompare(b, "ko", { numeric: true }));
+    } catch {
+      return;
+    }
+    for (const f of names) {
+      if (f.startsWith(".") || f.endsWith(".icloud")) continue;
+      const r = `${rel}/${f}`;
+      let st;
       try {
-        return statSync(join(dir, f)).isFile();
+        st = statSync(join(cfg.vault, r));
       } catch {
-        return false;
+        continue;
       }
-    })
-    .map((f) => `${cfg.inboxFolder}/${f}`);
+      if (st.isFile()) out.push(r);
+      else if (st.isDirectory() && depth < 3) walk(r, depth + 1);
+    }
+  };
+  if (existsSync(join(cfg.vault, cfg.inboxFolder))) walk(cfg.inboxFolder, 0);
+  return out;
+}
+
+/** 받은자료 안의 하위 폴더 이름 (예: 받은자료/데이터분석/a.md → "데이터분석"). 분류 힌트로 씀 */
+function folderHint(cfg: AssistantConfig, sourceRel: string): string | null {
+  const parts = sourceRel.slice(cfg.inboxFolder.length + 1).split("/");
+  return parts.length > 1 ? parts[0] : null;
+}
+
+/** 다 정리하고 빈 하위 폴더는 지움 (.DS_Store만 남은 것 포함) */
+function removeEmptyDirs(cfg: AssistantConfig, sourceRel: string): void {
+  const root = join(cfg.vault, cfg.inboxFolder);
+  let dir = dirname(join(cfg.vault, sourceRel));
+  while (dir.length > root.length && dir.startsWith(root)) {
+    try {
+      const left = readdirSync(dir);
+      if (left.some((f) => f !== ".DS_Store")) return;
+      if (left.length) unlinkSync(join(dir, ".DS_Store"));
+      rmdirSync(dir);
+    } catch {
+      return;
+    }
+    dir = dirname(dir);
+  }
 }
 
 /** 사이드바에 붙여 넣은 글·링크를 받은자료에 파일로 넣습니다. */
@@ -112,6 +146,8 @@ function prompt(o: {
   readPath: string;
   kind: "text" | "file" | "unreadable";
   hasUrl: boolean;
+  /** 사용자가 넣을 때 쓴 폴더 이름 */
+  hint: string | null;
   cats: string[];
   projects: string[];
   materials: string;
@@ -129,7 +165,7 @@ ${how}
 볼트에서 이 자료와 관련된 노트를 Grep으로 찾아봐 (핵심 낱말 두세 개로).
 프로젝트 노트: ${o.projects.length ? o.projects.map((p) => `[[${p}]]`).join(", ") : "(없음)"}
 지금 있는 분류: ${o.cats.length ? o.cats.join(", ") : "(아직 없음)"}
-
+${o.hint ? `사용자가 "${o.hint}" 폴더에 넣어서 줬어. 같은 폴더의 자료끼리는 같은 분류로, 분류 이름은 되도록 "${o.hint}" 그대로 써.\n` : ""}
 정리해서 아래 블록 하나로만 출력해. 블록 밖에는 아무것도 쓰지 마.
 <note path="${o.materials}/분류/제목.md" mode="create">
 ---
@@ -210,7 +246,7 @@ async function fileOne(cfg: AssistantConfig, sourceRel: string, hooks: InboxHook
   const h = runClaude({
     claudePath,
     cwd: vault,
-    prompt: prompt({ sourceRel, readPath, kind, hasUrl, cats, projects, materials: cfg.materialsFolder, today: ymd(new Date()) }),
+    prompt: prompt({ sourceRel, readPath, kind, hasUrl, hint: folderHint(cfg, sourceRel), cats, projects, materials: cfg.materialsFolder, today: ymd(new Date()) }),
     systemPrompt: SYSTEM,
     model: cfg.model || undefined,
     effort: "low",
@@ -253,6 +289,7 @@ async function fileOne(cfg: AssistantConfig, sourceRel: string, hooks: InboxHook
     body += `\n![[${basename(dest)}]]\n`;
   }
   writeFileSync(noteAbs, body);
+  removeEmptyDirs(cfg, sourceRel);
   const note = relative(vault, noteAbs).split(sep).join("/");
   hooks.log?.(`정리 ${sourceRel} → ${note}`);
   return { source: sourceRel, note, category };

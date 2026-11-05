@@ -1,6 +1,6 @@
 {
   "name": "obsidian-claude-sidebar",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "옵시디언 사이드바에서 Claude Code(구독)로 노트를 묻고, 다듬고, 정리하는 플러그인",
   "main": "main.js",
   "private": true,

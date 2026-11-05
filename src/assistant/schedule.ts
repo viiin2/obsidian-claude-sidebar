@@ -1,13 +1,17 @@
-// 매일 아침 자동 실행. 옵시디언이 꺼져 있어도 돌아갑니다.
-//   macOS   → launchd (정한 시각, 잠자고 있었으면 깨어날 때, 로그인할 때)
-//   Windows → 작업 스케줄러 (정한 시각, 놓쳤으면 켜지자마자, 로그인할 때)
-// 하루에 여러 번 불려도 cli.ts가 "오늘 이미 했으면 건너뜀"으로 한 번만 돌게 합니다.
+// 비서 자동 실행. 옵시디언이 꺼져 있어도 돌아갑니다.
+//   macOS   → launchd (10분마다, 잠자고 있었으면 깨어날 때, 로그인할 때)
+//   Windows → 작업 스케줄러 (10분마다, 로그인할 때)
+// 깨어날 때마다 `node assistant.js tick` 이 지금 할 일(아침·점심·저녁·새로고침·일정 알림)을
+// 고르고, 할 게 없으면 바로 끝납니다 (slots.ts). 그래서 시각을 바꿔도 다시 등록할 필요가 없어요.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { HOME, IS_MAC, IS_WIN, exec, findBin } from "../exec";
 import { LOG_PATH, SCRIPT_PATH, SUPPORT_DIR } from "./config";
 import { ymd } from "./datefmt";
+
+/** 몇 분마다 깨어날지 */
+const EVERY_MIN = 10;
 
 export const LABEL = "local.obsidian-claude-assistant";
 const PLIST_PATH = join(HOME, "Library/LaunchAgents", `${LABEL}.plist`);
@@ -29,6 +33,12 @@ export function parseTime(t: string): { h: number; m: number } | null {
   return h < 24 && mi < 60 ? { h, m: mi } : null;
 }
 
+/** "8:30" → "08:30", 이상하면 null */
+export function normalizeTime(t: string): string | null {
+  const p = parseTime(t);
+  return p ? `${pad(p.h)}:${pad(p.m)}` : null;
+}
+
 export function scheduleSupported(): boolean {
   return IS_MAC || IS_WIN;
 }
@@ -43,7 +53,7 @@ export function copyScript(source: string): void {
 
 // ── macOS ──
 
-function plist(node: string, t: { h: number; m: number }): string {
+export function plist(node: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -53,13 +63,9 @@ function plist(node: string, t: { h: number; m: number }): string {
   <array>
     <string>${esc(node)}</string>
     <string>${esc(SCRIPT_PATH)}</string>
-    <string>morning</string>
+    <string>tick</string>
   </array>
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key><integer>${t.h}</integer>
-    <key>Minute</key><integer>${t.m}</integer>
-  </dict>
+  <key>StartInterval</key><integer>${EVERY_MIN * 60}</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/dev/null</string>
   <key>StandardErrorPath</key><string>${esc(LOG_PATH)}</string>
@@ -70,10 +76,10 @@ function plist(node: string, t: { h: number; m: number }): string {
 
 const macDomain = () => `gui/${process.getuid?.() ?? 501}`;
 
-async function installMac(node: string, t: { h: number; m: number }): Promise<void> {
+async function installMac(node: string): Promise<void> {
   mkdirSync(dirname(PLIST_PATH), { recursive: true });
   mkdirSync(dirname(LOG_PATH), { recursive: true });
-  writeFileSync(PLIST_PATH, plist(node, t));
+  writeFileSync(PLIST_PATH, plist(node));
   await exec("launchctl", ["bootout", `${macDomain()}/${LABEL}`]);
   const r = await exec("launchctl", ["bootstrap", macDomain(), PLIST_PATH]);
   if (!r.ok) throw new Error(`launchctl: ${r.err.trim()}`);
@@ -84,20 +90,23 @@ async function installMac(node: string, t: { h: number; m: number }): Promise<vo
 /** 검은 명령 창이 뜨지 않게 wscript로 node를 숨겨서 실행 */
 function vbs(node: string): string {
   const q = (s: string) => s.replace(/"/g, '""');
-  return `CreateObject("WScript.Shell").Run """${q(node)}"" ""${q(SCRIPT_PATH)}"" morning", 0, False\r\n`;
+  return `CreateObject("WScript.Shell").Run """${q(node)}"" ""${q(SCRIPT_PATH)}"" tick", 0, False\r\n`;
 }
 
-function taskXml(t: { h: number; m: number }): string {
+export function taskXml(): string {
   const user = `${process.env.USERDOMAIN ?? ""}\\${process.env.USERNAME ?? ""}`;
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Obsidian Claude Sidebar 아침 브리핑</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Obsidian Claude Sidebar 비서 (아침·점심·저녁 브리핑, 일정 알림)</Description></RegistrationInfo>
   <Triggers>
-    <CalendarTrigger>
-      <StartBoundary>${ymd(new Date())}T${pad(t.h)}:${pad(t.m)}:00</StartBoundary>
+    <TimeTrigger>
+      <Repetition>
+        <Interval>PT${EVERY_MIN}M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>${ymd(new Date())}T00:00:00</StartBoundary>
       <Enabled>true</Enabled>
-      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
-    </CalendarTrigger>
+    </TimeTrigger>
     <LogonTrigger>
       <Enabled>true</Enabled>
       <UserId>${esc(user)}</UserId>
@@ -133,30 +142,28 @@ function taskXml(t: { h: number; m: number }): string {
 /** 작업 스케줄러와 wscript는 UTF-16(BOM)이어야 한글 경로·설명이 깨지지 않음 */
 const utf16 = (s: string) => Buffer.from("﻿" + s.replace(/\r?\n/g, "\r\n"), "utf16le");
 
-async function installWin(node: string, t: { h: number; m: number }): Promise<void> {
+async function installWin(node: string): Promise<void> {
   mkdirSync(SUPPORT_DIR, { recursive: true });
   writeFileSync(WIN_VBS, utf16(vbs(node)));
-  writeFileSync(WIN_XML, utf16(taskXml(t)));
+  writeFileSync(WIN_XML, utf16(taskXml()));
   const r = await exec("schtasks", ["/Create", "/TN", WIN_TASK, "/XML", WIN_XML, "/F"]);
   if (!r.ok) {
     unlinkSync(WIN_XML);
     throw new Error(`작업 스케줄러: ${r.err.trim() || r.out.trim()}`);
   }
-  // 맥의 RunAtLoad처럼 켜자마자 한 번 (오늘 시각이 지났고 아직 안 했으면 바로 브리핑)
+  // 맥의 RunAtLoad처럼 켜자마자 한 번 (지금 할 일이 있으면 바로)
   await exec("schtasks", ["/Run", "/TN", WIN_TASK]);
 }
 
 // ── 공통 ──
 
-export async function installSchedule(time: string, scriptSource: string): Promise<void> {
+export async function installSchedule(scriptSource: string): Promise<void> {
   if (!scheduleSupported()) throw new Error("자동 실행은 macOS와 Windows에서만 돼요");
-  const t = parseTime(time);
-  if (!t) throw new Error(`시각 형식이 이상해요: ${time} (예: 08:30)`);
   const node = findBin("node");
   if (!node) throw new Error("Node.js를 찾지 못했어요 (https://nodejs.org 에서 설치)");
   copyScript(scriptSource);
-  if (IS_WIN) await installWin(node, t);
-  else await installMac(node, t);
+  if (IS_WIN) await installWin(node);
+  else await installMac(node);
 }
 
 export async function uninstallSchedule(): Promise<void> {

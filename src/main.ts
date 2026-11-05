@@ -5,8 +5,11 @@ import { ChatMsg, ClaudeView, VIEW_TYPE } from "./view";
 import { claudeVersion, findClaude } from "./claude";
 import { AssistantConfig, DEFAULT_CONFIG, LOG_PATH, SNAPSHOT_PATH, SUPPORT_DIR, saveConfig } from "./assistant/config";
 import type { Snapshot } from "./assistant/collect";
+import type { AgendaItem } from "./assistant/agenda";
+import type { Routine } from "./assistant/routines";
+import { addToAgenda, addToRoutines, removeFromAgenda, removeFromRoutines } from "./assistant/briefing";
 import { listInbox, processInbox } from "./assistant/inbox";
-import { copyScript, installSchedule, parseTime, scheduleInstalled, scheduleSupported, uninstallSchedule } from "./assistant/schedule";
+import { copyScript, installSchedule, normalizeTime, scheduleInstalled, scheduleSupported, uninstallSchedule } from "./assistant/schedule";
 
 interface Settings {
   claudePath: string;
@@ -16,6 +19,14 @@ interface Settings {
   // 비서
   assistantOn: boolean;
   briefTime: string;
+  middayOn: boolean;
+  middayTime: string;
+  eveningOn: boolean;
+  eveningTime: string;
+  refreshHours: number;
+  remind: boolean;
+  agendaFile: string;
+  routineFile: string;
   scanRoots: string;
   projectFolder: string;
   autoInbox: boolean;
@@ -30,6 +41,14 @@ const DEFAULTS: Settings = {
   saveFolder: "Claude",
   assistantOn: false,
   briefTime: DEFAULT_CONFIG.time,
+  middayOn: DEFAULT_CONFIG.middayOn,
+  middayTime: DEFAULT_CONFIG.middayTime,
+  eveningOn: DEFAULT_CONFIG.eveningOn,
+  eveningTime: DEFAULT_CONFIG.eveningTime,
+  refreshHours: DEFAULT_CONFIG.refreshHours,
+  remind: DEFAULT_CONFIG.remind,
+  agendaFile: DEFAULT_CONFIG.agendaFile,
+  routineFile: DEFAULT_CONFIG.routineFile,
   scanRoots: DEFAULT_CONFIG.scanRoots.join(", "),
   projectFolder: DEFAULT_CONFIG.projectFolder,
   autoInbox: true,
@@ -77,7 +96,10 @@ export default class ClaudeSidebarPlugin extends Plugin {
     this.addRibbonIcon("bot", "Claude", () => void this.openView(true));
 
     this.addCommand({ id: "open", name: "열기", callback: () => void this.openView(true) });
-    this.addCommand({ id: "briefing", name: "오늘 브리핑", callback: async () => (await this.openView()).runBriefing() });
+    this.addCommand({ id: "briefing", name: "브리핑 (지금 시각에 맞게)", callback: async () => (await this.openView()).runBriefing() });
+    this.addCommand({ id: "morning", name: "아침 브리핑", callback: async () => (await this.openView()).runBriefing("morning") });
+    this.addCommand({ id: "midday", name: "점심 점검", callback: async () => (await this.openView()).runBriefing("midday") });
+    this.addCommand({ id: "evening", name: "저녁 회고", callback: async () => (await this.openView()).runBriefing("evening") });
     this.addCommand({ id: "inbox", name: "받은자료 정리", callback: async () => (await this.openView(), this.queueInbox()) });
     this.addCommand({ id: "polish", name: "지금 노트 다듬기", callback: async () => (await this.openView()).runPolish() });
     this.addCommand({ id: "save", name: "대화를 노트로 저장", callback: async () => (await this.openView()).runSave() });
@@ -97,7 +119,7 @@ export default class ClaudeSidebarPlugin extends Plugin {
       // 옵시디언은 켜질 때 모든 파일에 create를 보내므로 준비가 끝난 뒤에 등록
       this.registerEvent(
         this.app.vault.on("create", (f) => {
-          if (this.settings.autoInbox && f instanceof TFile && f.parent?.path === normalizePath(this.settings.inboxFolder)) this.queueInbox();
+          if (this.settings.autoInbox && f instanceof TFile && f.path.startsWith(normalizePath(this.settings.inboxFolder) + "/")) this.queueInbox();
         }),
       );
       const v = this.app.workspace.getActiveViewOfType(MarkdownView) ?? this.app.workspace.getMostRecentLeaf()?.view;
@@ -182,6 +204,14 @@ export default class ClaudeSidebarPlugin extends Plugin {
       vault: this.vaultPath(),
       enabled: s.assistantOn,
       time: s.briefTime,
+      middayOn: s.middayOn,
+      middayTime: s.middayTime,
+      eveningOn: s.eveningOn,
+      eveningTime: s.eveningTime,
+      refreshHours: s.refreshHours,
+      remind: s.remind,
+      agendaFile: s.agendaFile,
+      routineFile: s.routineFile,
       scanRoots: s.scanRoots.split(",").map((x) => x.trim()).filter(Boolean),
       projectFolder: s.projectFolder,
       inboxFolder: s.inboxFolder,
@@ -206,12 +236,30 @@ export default class ClaudeSidebarPlugin extends Plugin {
   }
 
   async setSchedule(on: boolean): Promise<void> {
-    if (on && !CAN_SCHEDULE) throw new Error("아침 브리핑 예약은 macOS와 Windows에서만 돼요");
+    if (on && !CAN_SCHEDULE) throw new Error("자동 비서는 macOS와 Windows에서만 돼요");
     this.settings.assistantOn = on;
     await this.saveChat();
     this.syncAssistant();
-    if (on) await installSchedule(this.settings.briefTime, this.scriptPath());
+    if (on) await installSchedule(this.scriptPath());
     else await uninstallSchedule();
+  }
+
+  /** 대화에서 말한 일정을 일정 목록(과 오늘이면 데일리 노트)에 넣음. 이미 있으면 false */
+  addAgenda(it: AgendaItem): boolean {
+    return addToAgenda(this.assistantConfig(), it);
+  }
+
+  removeAgenda(it: AgendaItem): void {
+    removeFromAgenda(this.assistantConfig(), it);
+  }
+
+  /** 대화에서 말한 루틴을 루틴 노트(와 오늘 할 날이면 데일리 노트)에 넣음 */
+  addRoutine(r: Routine): boolean {
+    return addToRoutines(this.assistantConfig(), r);
+  }
+
+  removeRoutine(r: Routine): void {
+    removeFromRoutines(this.assistantConfig(), r);
   }
 
   /** 대화에서 읽어도 되는 볼트 밖 폴더: 최근 프로젝트 폴더 + 현황 파일 폴더 */
@@ -369,22 +417,21 @@ class SettingsTab extends PluginSettingTab {
     // ── 비서 ──
     new Setting(containerEl).setName("비서").setHeading();
 
+    const on = s.assistantOn && scheduleInstalled();
     new Setting(containerEl)
-      .setName("매일 아침 브리핑")
+      .setName("자동 비서")
       .setDesc(
         !CAN_SCHEDULE
           ? "macOS와 Windows에서만 돼요. 📅 버튼으로 직접 브리핑할 수는 있어요"
-          : scheduleInstalled()
-          ? `켜짐 · 옵시디언이 꺼져 있어도 ${s.briefTime}에 오늘 노트에 할 일을 쓰고 알려요`
-          : "GitHub과 프로젝트 폴더를 살펴 오늘 할 일을 데일리 노트에 쓰고 알림을 띄워요",
+          : on
+          ? "켜짐 · 옵시디언이 꺼져 있어도 아래 시각에 데일리 노트에 쓰고 알려요"
+          : "정한 시각에 오늘 할 일, 오후 점검, 저녁 회고를 데일리 노트에 쓰고 알림을 띄워요",
       )
       .addToggle((t) =>
-        t.setDisabled(!CAN_SCHEDULE).setValue(s.assistantOn && scheduleInstalled()).onChange(async (on) => {
+        t.setDisabled(!CAN_SCHEDULE).setValue(on).onChange(async (v) => {
           try {
-            await this.plugin.setSchedule(on);
-            const now = new Date();
-            const past = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}` >= s.briefTime;
-            new Notice(!on ? "아침 브리핑을 껐어요" : past ? `켰어요 · 오늘 것은 지금 만들고, 내일부터 ${s.briefTime}에 알려요` : `매일 ${s.briefTime}에 브리핑해요`);
+            await this.plugin.setSchedule(v);
+            new Notice(v ? "켰어요 · 지금 할 일이 있으면 바로 해요" : "자동 비서를 껐어요");
           } catch (e) {
             new Notice(`실패: ${(e as Error).message}`);
           }
@@ -392,21 +439,67 @@ class SettingsTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl)
-      .setName("브리핑 시각")
-      .setDesc("24시간 형식 (예: 08:30)")
-      .addText((t) =>
-        t.setPlaceholder("08:30").setValue(s.briefTime).onChange(async (v) => {
-          if (!parseTime(v)) return;
-          s.briefTime = v.trim().padStart(5, "0");
+    type TimeKey = "briefTime" | "middayTime" | "eveningTime";
+    const slot = (name: string, desc: string, onKey: "middayOn" | "eveningOn" | null, timeKey: TimeKey) => {
+      const row = new Setting(containerEl).setName(name).setDesc(desc);
+      row.addText((t) =>
+        t.setPlaceholder(DEFAULTS[timeKey]).setValue(s[timeKey]).onChange(async (v) => {
+          const n = normalizeTime(v);
+          if (!n) return;
+          s[timeKey] = n;
           await save();
-          if (s.assistantOn) {
-            try {
-              await installSchedule(s.briefTime, this.plugin.scriptPath());
-            } catch (e) {
-              new Notice(`실패: ${(e as Error).message}`);
-            }
-          }
+        }),
+      );
+      if (onKey) {
+        row.addToggle((t) =>
+          t.setValue(s[onKey]).onChange(async (v) => {
+            s[onKey] = v;
+            await save();
+          }),
+        );
+      }
+      row.settingEl.addClass("cs-slot-setting");
+    };
+    slot("아침 브리핑", "오늘 할 일 · 다가오는 일정 · 프로젝트 현황", null, "briefTime");
+    slot("점심 점검", "오전에 한 것을 보고 오후 할 일 1~3개", "middayOn", "middayTime");
+    slot("저녁 회고", "오늘 한 것 · 내일 이어갈 것", "eveningOn", "eveningTime");
+
+    new Setting(containerEl)
+      .setName("현황 새로고침")
+      .setDesc("커밋과 체크를 보고 진행도·현황표만 고쳐요 (Claude 안 씀)")
+      .addDropdown((d) =>
+        d
+          .addOptions({ "0": "끄기", "1": "1시간마다", "2": "2시간마다", "4": "4시간마다" })
+          .setValue(String(s.refreshHours))
+          .onChange(async (v) => {
+            s.refreshHours = Number(v);
+            await save();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("일정 알림 · 일정 노트")
+      .setDesc(`사이드바에 "금요일 3시 치과"처럼 말하면 일정 노트에 들어가고, 그날 할 일에 붙고, 15분 전에 알려요`)
+      .addToggle((t) =>
+        t.setValue(s.remind).onChange(async (v) => {
+          s.remind = v;
+          await save();
+        }),
+      )
+      .addText((t) =>
+        t.setPlaceholder("일정.md").setValue(s.agendaFile).onChange(async (v) => {
+          s.agendaFile = v.trim() || "일정.md";
+          await save();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("루틴 노트")
+      .setDesc(`"매일 7시 영어 단어", "월수금 헬스"처럼 말하면 들어가요. 그 요일 할 일에 🔁로 붙고, 체크하면 연속 기록(🔥)이 쌓여요`)
+      .addText((t) =>
+        t.setPlaceholder("루틴.md").setValue(s.routineFile).onChange(async (v) => {
+          s.routineFile = v.trim() || "루틴.md";
+          await save();
         }),
       );
 

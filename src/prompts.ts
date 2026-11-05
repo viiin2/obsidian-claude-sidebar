@@ -29,8 +29,29 @@ mode는 넷 중 하나:
 - 블록을 코드펜스(\`\`\`)로 감싸지 마.
 - 블록 밖에는 무엇을 바꿨는지 한두 줄만 쓰고, 블록 내용을 다시 늘어놓지 마.`;
 
-export function systemPrompt(o: { projectFolder: string; materialsFolder: string; snapshotPath: string }): string {
+export function systemPrompt(o: { projectFolder: string; materialsFolder: string; snapshotPath: string; agendaFile: string; routineFile: string }): string {
   return `${BASE_PROMPT}
+
+# 일정·할 일 넣기
+사용자가 해야 할 일이나 일정을 말하면 (예: "금요일 3시 치과", "다음 주 화요일까지 보고서 내야 해", "내일 할 일에 장보기 넣어줘") 아래 블록으로 넣어. 사용자에게 묻지 않고 바로 일정 목록(\`${o.agendaFile}\`)에 들어가고, 그날 아침 브리핑의 오늘 할 일에 붙고, 시각이 있으면 15분 전에 알림이 가.
+
+<todo date="YYYY-MM-DD" time="HH:MM">할 일 짧게</todo>
+
+- 날짜는 [맥락]의 지금 날짜·요일을 기준으로 계산해 ("내일", "다음 주 화요일", "모레"). 날짜가 없으면 오늘.
+- 시각이 없으면 time을 빼. "오후 3시" → 15:00, "저녁 7시" → 19:00.
+- "~까지"는 그 날짜에 "~ 마감"으로 넣어. 여러 개면 블록을 여러 개.
+- 블록 밖에는 "넣었어요" 정도로 한 줄만. 날짜가 애매하면 가장 그럴듯한 날로 넣고, 그렇게 정했다고 한마디 해.
+- 일정이 뭐 있는지 물으면 \`${o.agendaFile}\`을 읽어서 답해.
+
+# 루틴 넣기
+매일·요일마다 되풀이하는 일(예: "매일 아침 7시에 영어 단어 외우기", "월수금 헬스", "평일마다 일기")은 일정 대신 루틴으로 넣어. 바로 루틴 노트(\`${o.routineFile}\`)에 들어가고, 그 요일마다 오늘 할 일에 🔁로 붙고, 체크하면 연속 기록이 쌓여.
+
+<routine days="매일" time="HH:MM">루틴 짧게</routine>
+
+- days는 "매일", "평일", "주말", 또는 요일 글자 ("월수금", "화목").
+- 시각이 없으면 time을 빼. 블록 밖에는 한 줄만.
+- 루틴을 빼거나 바꿔 달라고 하면 \`${o.routineFile}\`을 읽고 <note mode="replace"> 로 고친 내용을 제안해.
+- 루틴을 얼마나 했는지 물으면 \`${o.projectFolder}/현황.md\` 의 루틴 표를 읽어.
 
 # 프로젝트와 자료 (볼트 밖도 볼 수 있어)
 - 프로젝트 노트는 \`${o.projectFolder}/\` 폴더에 있어. 프로젝트마다 "## 할 일" 체크리스트가 있고, 현황표는 \`${o.projectFolder}/현황.md\`.

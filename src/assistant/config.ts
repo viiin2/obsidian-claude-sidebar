@@ -4,12 +4,27 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { HOME, IS_WIN } from "../exec";
+import type { SlotState } from "./slots";
 
 export interface AssistantConfig {
   vault: string;
   enabled: boolean;
   /** 아침 브리핑 시각 "HH:MM" */
   time: string;
+  /** 점심 점검: 오전에 한 것을 보고 오후 할 일을 다시 고름 */
+  middayOn: boolean;
+  middayTime: string;
+  /** 저녁 회고: 오늘 한 것 정리, 내일 이어갈 것 */
+  eveningOn: boolean;
+  eveningTime: string;
+  /** 몇 시간마다 현황표·진행도 새로고침 (Claude 안 씀, 0이면 끔) */
+  refreshHours: number;
+  /** 일정 시각 15분 전에 알림 */
+  remind: boolean;
+  /** 일정 목록 노트 (볼트 기준) */
+  agendaFile: string;
+  /** 루틴 노트 (볼트 기준) */
+  routineFile: string;
   /** 최근 며칠 안에 손댄 프로젝트를 챙길지 */
   days: number;
   /** git 폴더를 찾을 곳 */
@@ -24,18 +39,30 @@ export interface AssistantConfig {
   claudePath: string;
 }
 
-export const SUPPORT_DIR = IS_WIN
+/** 테스트할 때는 CLAUDE_ASSISTANT_HOME 으로 다른 폴더를 쓰게 할 수 있음 (진짜 설정을 건드리지 않게) */
+const TEST_HOME = process.env.CLAUDE_ASSISTANT_HOME;
+export const SUPPORT_DIR = TEST_HOME
+  ? TEST_HOME
+  : IS_WIN
   ? join(process.env.APPDATA ?? join(HOME, "AppData", "Roaming"), "obsidian-claude-assistant")
   : join(HOME, "Library/Application Support/obsidian-claude-assistant");
 export const CONFIG_PATH = join(SUPPORT_DIR, "config.json");
 export const STATE_PATH = join(SUPPORT_DIR, "state.json");
 export const SNAPSHOT_PATH = join(SUPPORT_DIR, "snapshot.json");
 export const SCRIPT_PATH = join(SUPPORT_DIR, "assistant.js");
-export const LOG_PATH = IS_WIN ? join(SUPPORT_DIR, "assistant.log") : join(HOME, "Library/Logs/obsidian-claude-assistant.log");
+export const LOG_PATH = IS_WIN || TEST_HOME ? join(SUPPORT_DIR, "assistant.log") : join(HOME, "Library/Logs/obsidian-claude-assistant.log");
 
 export const DEFAULT_CONFIG: Omit<AssistantConfig, "vault"> = {
   enabled: false,
   time: "08:30",
+  middayOn: true,
+  middayTime: "13:00",
+  eveningOn: true,
+  eveningTime: "21:00",
+  refreshHours: 2,
+  remind: true,
+  agendaFile: "일정.md",
+  routineFile: "루틴.md",
   days: 30,
   // 윈도우: 바탕화면(OneDrive로 옮겨진 경우 포함), GitHub Desktop, Visual Studio 기본 위치
   scanRoots: IS_WIN
@@ -75,10 +102,20 @@ export function saveConfig(c: AssistantConfig): void {
   writeJson(CONFIG_PATH, c);
 }
 
-export interface AssistantState {
-  /** 마지막으로 아침 브리핑을 끝낸 날 (YYYY-MM-DD) */
-  lastBriefing?: string;
+export interface AssistantState extends SlotState {
+  /** 마지막 오류 (설정 화면에 보여 줌) */
   lastError?: string;
+  /** 이미 알림을 보낸 일정 ("날짜 시각 할 일") */
+  reminded?: string[];
+  /** 실패 알림을 보낸 날·작업 (같은 실패로 여러 번 알리지 않게) */
+  failNotified?: string;
+}
+
+/** 상태 파일의 일부만 바꿔 저장 (다른 작업이 쓴 값은 그대로) */
+export function patchState(p: Partial<AssistantState>): AssistantState {
+  const next = { ...loadState(), ...p };
+  saveState(next);
+  return next;
 }
 
 export function loadState(): AssistantState {
