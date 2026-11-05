@@ -1,6 +1,6 @@
 // 비서 자동 실행. 옵시디언이 꺼져 있어도 돌아갑니다.
 //   macOS   → launchd (10분마다, 잠자고 있었으면 깨어날 때, 로그인할 때)
-//   Windows → 작업 스케줄러 (10분마다, 로그인할 때)
+//   Windows → 작업 스케줄러 (10분마다, 놓쳤으면 켜지자마자)
 // 깨어날 때마다 `node assistant.js tick` 이 지금 할 일(아침·점심·저녁·새로고침·일정 알림)을
 // 고르고, 할 게 없으면 바로 끝납니다 (slots.ts). 그래서 시각을 바꿔도 다시 등록할 필요가 없어요.
 
@@ -107,11 +107,7 @@ export function taskXml(): string {
       <StartBoundary>${ymd(new Date())}T00:00:00</StartBoundary>
       <Enabled>true</Enabled>
     </TimeTrigger>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <UserId>${esc(user)}</UserId>
-      <Delay>PT1M</Delay>
-    </LogonTrigger>
+    <!-- 로그인 시 실행(LogonTrigger)은 관리자 권한이 필요할 수 있어 넣지 않음. 10분마다 도니까 로그인 뒤 10분 안에 돔 -->
   </Triggers>
   <Principals>
     <Principal id="Author">

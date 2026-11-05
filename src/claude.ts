@@ -2,7 +2,7 @@
 // 로그인된 구독으로 돌아가므로 API 키가 필요 없습니다.
 
 import { spawn } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { IS_WIN, findBin, toolEnv } from "./exec";
 import { ClaudeEvent, StreamParser } from "./stream";
@@ -47,14 +47,30 @@ export function findClaude(custom?: string): string | null {
 }
 
 /**
- * 윈도우에서 npm으로 설치한 claude.cmd는 바로 spawn할 수 없으므로 node + cli.js로 실행합니다.
+ * 윈도우에서 npm으로 설치한 claude.cmd는 바로 spawn할 수 없으므로 (최신 Node는 .cmd 실행을 막음)
+ * .cmd 안에 적힌 진짜 실행 파일(cli.js면 node로, .exe면 그대로)을 찾아 실행합니다.
  * (공식 설치 프로그램의 claude.exe는 그대로 실행)
  */
 function command(claudePath: string, args: string[]): { cmd: string; args: string[] } {
   if (IS_WIN && /\.cmd$/i.test(claudePath)) {
-    const cli = join(dirname(claudePath), "node_modules", "@anthropic-ai", "claude-code", "cli.js");
-    const node = findBin("node");
-    if (existsSync(cli) && node) return { cmd: node, args: [cli, ...args] };
+    const dir = dirname(claudePath);
+    const candidates: string[] = [];
+    try {
+      // npm이 만든 .cmd: "%dp0%\node_modules\...\cli.js" 또는 ...\claude.exe (node.exe 줄은 건너뜀)
+      const shim = readFileSync(claudePath, "utf8");
+      for (const m of shim.matchAll(/%~?dp0%?\\([^"%\r\n]+\.(?:js|exe))/gi)) {
+        if (!/(^|\\)node\.exe$/i.test(m[1])) candidates.push(join(dir, m[1]));
+      }
+    } catch {
+      /* 못 읽으면 기본 위치만 */
+    }
+    candidates.push(join(dir, "node_modules", "@anthropic-ai", "claude-code", "cli.js"));
+    for (const target of candidates) {
+      if (!existsSync(target)) continue;
+      if (/\.exe$/i.test(target)) return { cmd: target, args };
+      const node = findBin("node");
+      if (node) return { cmd: node, args: [target, ...args] };
+    }
   }
   return { cmd: claudePath, args };
 }

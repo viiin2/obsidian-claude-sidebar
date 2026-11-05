@@ -72,7 +72,7 @@ if ($c) { Ok "Claude Code ($c)" } else { No "Claude Code가 없어요 → PowerS
 $g = Find-Bin 'git'
 if ($g) { Ok "Git" } else { No "Git이 없어요 (Claude Code에 필요) → winget install --id Git.Git" }
 $n = Find-Bin 'node'
-if ($n) { Ok "Node.js" } else { No "Node.js가 없어요 (아침 자동 브리핑에 필요) → winget install OpenJS.NodeJS.LTS" }
+if ($n) { Ok "Node.js" } else { No "Node.js가 없어요 (자동 비서에 필요) → winget install OpenJS.NodeJS.LTS" }
 $h = Find-Bin 'gh'
 if ($h) { Ok "GitHub CLI" } else { No "GitHub CLI가 없어요 (선택: 내 GitHub 저장소도 챙기려면) → winget install --id GitHub.cli  후  gh auth login" }
 
@@ -80,5 +80,6 @@ Write-Host ""
 Write-Host "끝! 옵시디언을 완전히 껐다가 다시 켜세요." -ForegroundColor Cyan
 Write-Host " - 왼쪽 아이콘 줄의 로봇 아이콘을 누르면 사이드바가 열려요."
 Write-Host " - 플러그인이 안 보이면: 설정 > 커뮤니티 플러그인 > '제한 모드 끄기' 후 Claude Sidebar 켜기"
-Write-Host " - 아침 브리핑: 설정 > Claude Sidebar > 매일 아침 브리핑 켜기"
+Write-Host " - 자동 비서(아침·점심·저녁 브리핑, 일정 알림): 설정 > Claude Sidebar > 자동 비서 켜기"
+Write-Host " - 사용법은 이 폴더의 START-HERE.md 를 보세요."
 Write-Host ""
