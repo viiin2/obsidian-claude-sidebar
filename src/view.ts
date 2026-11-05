@@ -586,9 +586,11 @@ export class ClaudeView extends ItemView {
   private toolUse(name: string, input: Record<string, unknown>): ToolUse {
     const str = (v: unknown) => (typeof v === "string" ? v : "");
     if (name === "Read") {
-      const abs = str(input.file_path);
-      const base = this.app.vault.adapter instanceof FileSystemAdapter ? this.app.vault.adapter.getBasePath() : "";
-      const rel = base && abs.startsWith(base + "/") ? abs.slice(base.length + 1) : abs;
+      // 윈도우 경로(C:\...)도 볼트 기준 "폴더/노트.md" 로 맞춤
+      const slash = (p: string) => p.replace(/\\/g, "/");
+      const abs = slash(str(input.file_path));
+      const base = slash(this.app.vault.adapter instanceof FileSystemAdapter ? this.app.vault.adapter.getBasePath() : "");
+      const rel = base && abs.toLowerCase().startsWith(base.toLowerCase() + "/") ? abs.slice(base.length + 1) : abs;
       return { name, detail: baseName(rel), path: getFile(this.app, rel) ? rel : undefined };
     }
     if (name === "Grep" || name === "Glob") return { name, detail: str(input.pattern) };

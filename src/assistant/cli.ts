@@ -1,21 +1,45 @@
-// 비서 실행 파일 (launchd가 매일 아침 부릅니다).
+// 비서 실행 파일 (맥은 launchd, 윈도우는 작업 스케줄러가 매일 아침 부릅니다).
 //   node assistant.js morning [--force]   아침 브리핑 (이미 했거나 시각 전이면 건너뜀)
 //   node assistant.js inbox               받은자료 폴더 정리
 //   node assistant.js collect             모은 프로젝트 현황을 JSON으로 출력
 //   node assistant.js install|uninstall   매일 아침 자동 실행 등록·해제
 //   node assistant.js status              설정·상태 보기
 
-import { exec } from "../exec";
+import { appendFileSync, mkdirSync } from "fs";
+import { dirname } from "path";
+import { IS_WIN, exec } from "../exec";
 import { collect } from "./collect";
 import { CONFIG_PATH, LOG_PATH, loadConfig, loadState, saveState } from "./config";
 import { formatDate, ymd } from "./datefmt";
 import { listInbox, processInbox } from "./inbox";
 import { runMorning } from "./morning";
-import { PLIST_PATH, installSchedule, scheduleInstalled, uninstallSchedule } from "./schedule";
+import { SCHEDULE_FILE, installSchedule, scheduleInstalled, uninstallSchedule } from "./schedule";
 
-const log = (msg: string) => console.log(`[${formatDate(new Date(), "YYYY-MM-DD HH:mm")}] ${msg}`);
+function log(msg: string): void {
+  const line = `[${formatDate(new Date(), "YYYY-MM-DD HH:mm")}] ${msg}`;
+  console.log(line);
+  try {
+    mkdirSync(dirname(LOG_PATH), { recursive: true });
+    appendFileSync(LOG_PATH, line + "\n");
+  } catch {
+    /* 기록 실패는 무시 */
+  }
+}
 
 function notify(title: string, msg: string): Promise<unknown> {
+  if (IS_WIN) {
+    // 윈도우 알림 (PowerShell 앱 이름으로 띄움). 따옴표·한글이 깨지지 않게 인코딩해서 넘김
+    const ps = (s: string) => s.replace(/'/g, "''");
+    const script = `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$x = $t.GetElementsByTagName('text')
+$x.Item(0).AppendChild($t.CreateTextNode('${ps(title)}')) > $null
+$x.Item(1).AppendChild($t.CreateTextNode('${ps(msg)}')) > $null
+$id = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($t))`;
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    return exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded]);
+  }
   const q = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   return exec("osascript", ["-e", `display notification ${q(msg)} with title ${q(title)} sound name "Glass"`]);
 }
@@ -43,7 +67,7 @@ async function main(): Promise<number> {
 
   if (cmd === "install") {
     await installSchedule(cfg.time, __filename);
-    log(`매일 ${cfg.time} 실행 등록 → ${PLIST_PATH}`);
+    log(`매일 ${cfg.time} 실행 등록 → ${SCHEDULE_FILE}`);
     return 0;
   }
 
@@ -54,7 +78,7 @@ async function main(): Promise<number> {
   }
 
   if (cmd === "status") {
-    console.log(JSON.stringify({ config: cfg, state: loadState(), scheduled: scheduleInstalled(), plist: PLIST_PATH, log: LOG_PATH }, null, 2));
+    console.log(JSON.stringify({ config: cfg, state: loadState(), scheduled: scheduleInstalled(), schedule: SCHEDULE_FILE, log: LOG_PATH }, null, 2));
     return 0;
   }
 

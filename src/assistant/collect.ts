@@ -51,7 +51,7 @@ export interface Snapshot {
 }
 
 const MAX_COMMITS = 20;
-const SKIP_DIRS = new Set(["node_modules", "Library", "Applications", "dist", "build", "venv", ".venv"]);
+const SKIP_DIRS = new Set(["node_modules", "Library", "Applications", "AppData", "dist", "build", "venv", ".venv", "$RECYCLE.BIN"]);
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

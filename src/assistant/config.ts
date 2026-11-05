@@ -3,7 +3,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { HOME } from "../exec";
+import { HOME, IS_WIN } from "../exec";
 
 export interface AssistantConfig {
   vault: string;
@@ -24,18 +24,23 @@ export interface AssistantConfig {
   claudePath: string;
 }
 
-export const SUPPORT_DIR = join(HOME, "Library/Application Support/obsidian-claude-assistant");
+export const SUPPORT_DIR = IS_WIN
+  ? join(process.env.APPDATA ?? join(HOME, "AppData", "Roaming"), "obsidian-claude-assistant")
+  : join(HOME, "Library/Application Support/obsidian-claude-assistant");
 export const CONFIG_PATH = join(SUPPORT_DIR, "config.json");
 export const STATE_PATH = join(SUPPORT_DIR, "state.json");
 export const SNAPSHOT_PATH = join(SUPPORT_DIR, "snapshot.json");
 export const SCRIPT_PATH = join(SUPPORT_DIR, "assistant.js");
-export const LOG_PATH = join(HOME, "Library/Logs/obsidian-claude-assistant.log");
+export const LOG_PATH = IS_WIN ? join(SUPPORT_DIR, "assistant.log") : join(HOME, "Library/Logs/obsidian-claude-assistant.log");
 
 export const DEFAULT_CONFIG: Omit<AssistantConfig, "vault"> = {
   enabled: false,
   time: "08:30",
   days: 30,
-  scanRoots: ["~/Desktop"],
+  // 윈도우: 바탕화면(OneDrive로 옮겨진 경우 포함), GitHub Desktop, Visual Studio 기본 위치
+  scanRoots: IS_WIN
+    ? ["~/Desktop", "~/OneDrive/Desktop", "~/OneDrive/바탕 화면", "~/Documents/GitHub", "~/source/repos"]
+    : ["~/Desktop"],
   projectFolder: "프로젝트",
   inboxFolder: "받은자료",
   materialsFolder: "자료",
@@ -44,7 +49,7 @@ export const DEFAULT_CONFIG: Omit<AssistantConfig, "vault"> = {
 };
 
 export function expandHome(p: string): string {
-  return p.trim().replace(/^~(?=$|\/)/, HOME);
+  return p.trim().replace(/^~(?=$|[\\/])/, HOME);
 }
 
 function readJson<T>(path: string): T | null {

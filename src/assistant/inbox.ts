@@ -3,12 +3,13 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "fs";
 import { promises as fsp } from "fs";
-import { basename, dirname, extname, join } from "path";
+import { basename, dirname, extname, join, relative, sep } from "path";
 import { RunHandle, runClaude } from "../claude";
-import { exec, findBin } from "../exec";
+import { IS_MAC, exec, findBin } from "../exec";
 import { noteBlocks } from "../segments";
 import { AssistantConfig, SUPPORT_DIR } from "./config";
 import { formatDate, ymd } from "./datefmt";
+import { htmlText, officeText } from "./officetext";
 
 export interface InboxHooks {
   step?(icon: string, label: string): void;
@@ -26,8 +27,11 @@ export interface FiledNote {
   error?: string;
 }
 
-const TEXT_EXT = new Set([".md", ".txt", ".csv", ".json"]);
-const CONVERT_EXT = new Set([".docx", ".doc", ".rtf", ".odt", ".html", ".htm", ".webarchive"]);
+const TEXT_EXT = new Set([".md", ".txt", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml", ".log", ".srt", ".vtt"]);
+/** 글자만 뽑아서 읽게 하는 문서 (워드, 파워포인트, 한글 hwpx, 웹페이지). 맥은 textutil로 doc·rtf·odt도 */
+const OFFICE_EXT = new Set([".docx", ".pptx", ".hwpx"]);
+const HTML_EXT = new Set([".html", ".htm"]);
+const MAC_CONVERT_EXT = new Set([".doc", ".rtf", ".odt", ".webarchive"]);
 const READABLE_EXT = new Set([".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
 const SYSTEM = `너는 사용자의 자료 정리 비서야. 작업 폴더는 사용자의 옵시디언 볼트야.
@@ -95,9 +99,9 @@ function projectNames(cfg: AssistantConfig): string[] {
     .map((f) => f.replace(/\.md$/, ""));
 }
 
-/** iCloud에서 아직 안 받은 파일이면 받을 때까지 기다립니다 (최대 60초). */
+/** iCloud·OneDrive에서 아직 안 받은 파일이면 받을 때까지 기다립니다 (최대 60초). */
 async function materialize(abs: string): Promise<boolean> {
-  await exec("brctl", ["download", abs], { timeout: 10000 });
+  if (IS_MAC) await exec("brctl", ["download", abs], { timeout: 10000 });
   const read = fsp.readFile(abs).then(() => true, () => false);
   const timeout = new Promise<boolean>((r) => setTimeout(() => r(false), 60000));
   return Promise.race([read, timeout]);
@@ -161,16 +165,32 @@ async function fileOne(cfg: AssistantConfig, sourceRel: string, hooks: InboxHook
   const name = basename(abs);
   hooks.step?.("inbox", name);
 
-  if (!(await materialize(abs))) return { source: sourceRel, error: "iCloud에서 파일을 받지 못했어요" };
+  if (!(await materialize(abs))) return { source: sourceRel, error: "클라우드에서 파일을 받지 못했어요" };
 
   let readPath = sourceRel;
   let kind: "text" | "file" | "unreadable" = TEXT_EXT.has(ext) ? "text" : READABLE_EXT.has(ext) ? "file" : "unreadable";
   let textContent = "";
   const addDirs: string[] = [];
   if (kind === "text") textContent = readFileSync(abs, "utf8");
-  if (CONVERT_EXT.has(ext)) {
-    // 워드·한글 문서 등은 macOS textutil로 글자만 뽑아 읽게 함
-    const tmpDir = join(SUPPORT_DIR, "convert");
+  // 문서는 글자만 뽑아 임시 파일로 만들고 그걸 읽게 함
+  let extracted: string | null = null;
+  try {
+    if (OFFICE_EXT.has(ext)) extracted = officeText(readFileSync(abs), ext);
+    else if (HTML_EXT.has(ext)) extracted = htmlText(readFileSync(abs, "utf8"));
+  } catch {
+    extracted = null;
+  }
+  const tmpDir = join(SUPPORT_DIR, "convert");
+  if (extracted?.trim()) {
+    mkdirSync(tmpDir, { recursive: true });
+    readPath = join(tmpDir, `${Date.now()}.txt`);
+    writeFileSync(readPath, extracted);
+    kind = "file";
+    addDirs.push(tmpDir);
+  } else if (HTML_EXT.has(ext)) {
+    readPath = sourceRel;
+    kind = "file";
+  } else if (IS_MAC && MAC_CONVERT_EXT.has(ext)) {
     mkdirSync(tmpDir, { recursive: true });
     const out = join(tmpDir, `${Date.now()}.txt`);
     const r = await exec("textutil", ["-convert", "txt", "-output", out, abs], { timeout: 30000 });
@@ -233,7 +253,7 @@ async function fileOne(cfg: AssistantConfig, sourceRel: string, hooks: InboxHook
     body += `\n![[${basename(dest)}]]\n`;
   }
   writeFileSync(noteAbs, body);
-  const note = noteAbs.slice(vault.length + 1);
+  const note = relative(vault, noteAbs).split(sep).join("/");
   hooks.log?.(`정리 ${sourceRel} → ${note}`);
   return { source: sourceRel, note, category };
 }

@@ -2,7 +2,9 @@
 // 로그인된 구독으로 돌아가므로 API 키가 필요 없습니다.
 
 import { spawn } from "child_process";
-import { findBin, toolEnv } from "./exec";
+import { existsSync } from "fs";
+import { dirname, join } from "path";
+import { IS_WIN, findBin, toolEnv } from "./exec";
 import { ClaudeEvent, StreamParser } from "./stream";
 
 export interface RunOptions {
@@ -44,6 +46,19 @@ export function findClaude(custom?: string): string | null {
   return findBin("claude", custom);
 }
 
+/**
+ * 윈도우에서 npm으로 설치한 claude.cmd는 바로 spawn할 수 없으므로 node + cli.js로 실행합니다.
+ * (공식 설치 프로그램의 claude.exe는 그대로 실행)
+ */
+function command(claudePath: string, args: string[]): { cmd: string; args: string[] } {
+  if (IS_WIN && /\.cmd$/i.test(claudePath)) {
+    const cli = join(dirname(claudePath), "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+    const node = findBin("node");
+    if (existsSync(cli) && node) return { cmd: node, args: [cli, ...args] };
+  }
+  return { cmd: claudePath, args };
+}
+
 export function runClaude(o: RunOptions): RunHandle {
   const args = [
     "-p",
@@ -69,7 +84,8 @@ export function runClaude(o: RunOptions): RunHandle {
   let stopped = false;
   let stderr = "";
   const parser = new StreamParser(o.onEvent);
-  const child = spawn(o.claudePath, args, { cwd: o.cwd, env: toolEnv(), stdio: ["pipe", "pipe", "pipe"] });
+  const c = command(o.claudePath, args);
+  const child = spawn(c.cmd, c.args, { cwd: o.cwd, env: toolEnv(), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (c: string) => parser.push(c));
@@ -105,7 +121,8 @@ export function runClaude(o: RunOptions): RunHandle {
 /** 설정 화면의 "연결 확인" 버튼용 */
 export function claudeVersion(claudePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(claudePath, ["--version"], { env: toolEnv() });
+    const c = command(claudePath, ["--version"]);
+    const child = spawn(c.cmd, c.args, { env: toolEnv(), windowsHide: true });
     let out = "";
     child.stdout.on("data", (c) => (out += c));
     child.on("error", reject);

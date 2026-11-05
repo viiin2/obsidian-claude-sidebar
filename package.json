@@ -1,6 +1,6 @@
 {
   "name": "obsidian-claude-sidebar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "옵시디언 사이드바에서 Claude Code(구독)로 노트를 묻고, 다듬고, 정리하는 플러그인",
   "main": "main.js",
   "private": true,
@@ -8,8 +8,9 @@
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit && node esbuild.config.mjs production",
     "test": "node esbuild.config.mjs test && node --test \"test-out/**/*.test.js\"",
-    "install-vault": "npm run build && ./install.sh",
-    "e2e": "esbuild scripts/e2e.ts --bundle --platform=node --outfile=test-out/e2e.js --log-level=warning && node test-out/e2e.js"
+    "install-vault": "npm run build && node scripts/install.mjs",
+    "e2e": "esbuild scripts/e2e.ts --bundle --platform=node --outfile=test-out/e2e.js --log-level=warning && node test-out/e2e.js",
+    "package": "./scripts/package.sh"
   },
   "license": "MIT",
   "devDependencies": {

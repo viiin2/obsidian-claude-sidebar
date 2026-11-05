@@ -1,8 +1,0 @@
-# Claude 사이드바용: 노트(.md, .canvas)만 검색합니다.
-# iCloud에서 아직 안 받은 첨부파일을 열다가 검색이 멈추는 걸 막아요.
-*
-!*/
-!*.md
-!*.canvas
-.obsidian/
-.trash/

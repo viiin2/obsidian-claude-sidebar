@@ -6,7 +6,7 @@ const mode = process.argv[2];
 if (mode === "test") {
   // obsidian 없이 돌아가는 순수 로직만 node로 테스트
   await esbuild.build({
-    entryPoints: ["src/segments.test.ts", "src/diff.test.ts", "src/stream.test.ts", "src/assistant/projects.test.ts"],
+    entryPoints: ["src/segments.test.ts", "src/diff.test.ts", "src/stream.test.ts", "src/assistant/projects.test.ts", "src/assistant/officetext.test.ts"],
     bundle: true,
     platform: "node",
     format: "cjs",

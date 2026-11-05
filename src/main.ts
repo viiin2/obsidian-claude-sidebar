@@ -1,12 +1,12 @@
 import { App, FileSystemAdapter, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, normalizePath } from "obsidian";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { ChatMsg, ClaudeView, VIEW_TYPE } from "./view";
 import { claudeVersion, findClaude } from "./claude";
 import { AssistantConfig, DEFAULT_CONFIG, LOG_PATH, SNAPSHOT_PATH, SUPPORT_DIR, saveConfig } from "./assistant/config";
 import type { Snapshot } from "./assistant/collect";
 import { listInbox, processInbox } from "./assistant/inbox";
-import { copyScript, installSchedule, parseTime, scheduleInstalled, uninstallSchedule } from "./assistant/schedule";
+import { copyScript, installSchedule, parseTime, scheduleInstalled, scheduleSupported, uninstallSchedule } from "./assistant/schedule";
 
 interface Settings {
   claudePath: string;
@@ -37,6 +37,18 @@ const DEFAULTS: Settings = {
   materialsFolder: DEFAULT_CONFIG.materialsFolder,
 };
 const MAX_SAVED_MSGS = 200;
+const CAN_SCHEDULE = scheduleSupported();
+
+// iCloud에서 아직 안 받은 첨부파일을 검색하다 멈추는 것을 막음: 노트(.md, .canvas)만 검색
+const RGIGNORE = `# Claude Sidebar: 노트(.md, .canvas)만 검색합니다.
+# iCloud에서 아직 안 받은 첨부파일을 열다가 검색이 멈추는 걸 막아요.
+*
+!*/
+!*.md
+!*.canvas
+.obsidian/
+.trash/
+`;
 
 export interface Chat {
   sessionId: string | null;
@@ -91,6 +103,7 @@ export default class ClaudeSidebarPlugin extends Plugin {
       const v = this.app.workspace.getActiveViewOfType(MarkdownView) ?? this.app.workspace.getMostRecentLeaf()?.view;
       if (v instanceof MarkdownView) this.lastMd = v;
       refresh();
+      this.ensureRgignore();
       this.syncAssistant();
       if (this.settings.autoInbox) {
         await this.ensureFolder(this.settings.inboxFolder);
@@ -151,6 +164,15 @@ export default class ClaudeSidebarPlugin extends Plugin {
     await this.saveData({ settings: this.settings, chat: this.chat });
   }
 
+  private ensureRgignore(): void {
+    const p = join(this.vaultPath(), ".rgignore");
+    try {
+      if (this.vaultPath() && !existsSync(p)) writeFileSync(p, RGIGNORE);
+    } catch {
+      /* 쓰기 권한 없음 등: 검색이 조금 느릴 뿐 */
+    }
+  }
+
   // ─── 비서 ─────────────────────────────────────────────────
 
   assistantConfig(): AssistantConfig {
@@ -184,6 +206,7 @@ export default class ClaudeSidebarPlugin extends Plugin {
   }
 
   async setSchedule(on: boolean): Promise<void> {
+    if (on && !CAN_SCHEDULE) throw new Error("아침 브리핑 예약은 macOS와 Windows에서만 돼요");
     this.settings.assistantOn = on;
     await this.saveChat();
     this.syncAssistant();
@@ -349,12 +372,14 @@ class SettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("매일 아침 브리핑")
       .setDesc(
-        scheduleInstalled()
+        !CAN_SCHEDULE
+          ? "macOS와 Windows에서만 돼요. 📅 버튼으로 직접 브리핑할 수는 있어요"
+          : scheduleInstalled()
           ? `켜짐 · 옵시디언이 꺼져 있어도 ${s.briefTime}에 오늘 노트에 할 일을 쓰고 알려요`
-          : "GitHub과 프로젝트 폴더를 살펴 오늘 할 일을 데일리 노트에 쓰고 맥 알림을 띄워요",
+          : "GitHub과 프로젝트 폴더를 살펴 오늘 할 일을 데일리 노트에 쓰고 알림을 띄워요",
       )
       .addToggle((t) =>
-        t.setValue(s.assistantOn && scheduleInstalled()).onChange(async (on) => {
+        t.setDisabled(!CAN_SCHEDULE).setValue(s.assistantOn && scheduleInstalled()).onChange(async (on) => {
           try {
             await this.plugin.setSchedule(on);
             const now = new Date();

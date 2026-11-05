@@ -1,7 +1,7 @@
 {
   "id": "claude-sidebar",
   "name": "Claude Sidebar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
   "description": "사이드바에서 Claude Code(구독)로 노트를 묻고, 다듬고, 데일리 노트를 정리합니다.",
   "author": "viiin2",
