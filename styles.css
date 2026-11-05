@@ -408,7 +408,7 @@
 /* ── 입력창 ── */
 .cs-foot {
   flex: none;
-  padding: 8px 10px 10px;
+  padding: 8px 10px calc(10px + var(--cs-status-h, 0px));
   border-top: 1px solid var(--background-modifier-border);
 }
 .cs-ctx:empty {

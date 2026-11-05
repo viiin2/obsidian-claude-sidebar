@@ -83,6 +83,7 @@ export class ClaudeView extends ItemView {
   private before = new Map<string, string | null>();
   private undos = new Map<string, () => Promise<void>>();
   private includeNote = true;
+  private resizeObs: ResizeObserver | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeSidebarPlugin) {
     super(leaf);
@@ -144,9 +145,33 @@ export class ClaudeView extends ItemView {
 
     this.renderAll();
     this.updateCtx();
+
+    // 옵시디언 아래쪽 상태 표시줄이 입력창을 가리지 않게 겹치는 만큼 띄움
+    const fit = () => this.fitStatusBar();
+    this.registerEvent(this.app.workspace.on("layout-change", fit));
+    this.registerEvent(this.app.workspace.on("resize", fit));
+    this.registerDomEvent(window, "resize", fit);
+    this.resizeObs = new ResizeObserver(fit);
+    this.resizeObs.observe(this.contentEl);
+    const bar = document.body.querySelector(".status-bar");
+    if (bar) this.resizeObs.observe(bar);
+    window.setTimeout(fit, 100);
+  }
+
+  private fitStatusBar(): void {
+    const bar = document.body.querySelector(".status-bar") as HTMLElement | null;
+    let h = 0;
+    if (bar && getComputedStyle(bar).display !== "none") {
+      const b = bar.getBoundingClientRect();
+      const v = this.contentEl.getBoundingClientRect();
+      const overlaps = b.height > 0 && b.left < v.right && b.right > v.left && b.top < v.bottom && b.bottom > v.top;
+      if (overlaps) h = Math.ceil(v.bottom - b.top);
+    }
+    this.contentEl.style.setProperty("--cs-status-h", `${h}px`);
   }
 
   async onClose(): Promise<void> {
+    this.resizeObs?.disconnect();
     this.run?.stop();
     if (this.tick) window.clearInterval(this.tick);
     this.components.forEach((c) => c.unload());
